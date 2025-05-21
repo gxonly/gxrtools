@@ -12,3 +12,5 @@ rust_xlsxwriter = "0.6"     # 写xlsx文件
 chrono = "0.4"
 calamine = "0.19"   # 读xlsx文件
 async-std = "1.12"  # 用于异步TCP连接
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.7"

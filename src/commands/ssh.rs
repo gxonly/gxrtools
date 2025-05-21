@@ -10,6 +10,7 @@ use std::io::{Write, Read};  // 添加了Read导入
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+use crate::constants::DEFAULT_SSH_COMMAND;
 
 #[derive(Parser, Debug)]
 #[command(about = "SSH批量命令执行工具", long_about = None)]
@@ -35,15 +36,15 @@ pub struct SshArgs {
     pub password_or_key: Option<String>,
     
     /// 要执行的命令
-    #[arg(short = 'c', long, required = true)]
-    pub command: String,
+    #[arg(short = 'c', long)]
+    pub command: Option<String>,
     
     /// 并发线程数
     #[arg(short = 't', long, default_value = "4")]
     pub threads: usize,
 
-    /// 输出到控制台
-    #[arg(short = 'e', long)]
+    /// 输出到控制台，使用前提需指定自定义命令
+    #[arg(short = 'e', long, requires = "command")]
     pub echo: bool,
 }
 
@@ -63,19 +64,24 @@ fn ensure_output_dir() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     Ok(output_dir)
 }
 
-fn save_result(host: &str, output: &str, echo: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let output_dir = ensure_output_dir()?;
-    let filename = format!("{}.txt", host.replace(".", "_"));
-    let filepath = output_dir.join(filename);
+fn save_result(host: &str, output: &str, echo: bool, dbcp_comm: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if !dbcp_comm{
+        let output_dir = ensure_output_dir()?;
+        let filename = format!("{}.txt", host.replace(".", "_"));
+        let filepath = output_dir.join(filename);
 
-    let mut file = File::create(filepath)?;
-    writeln!(file, "{}", output)?;
+        let mut file = File::create(filepath)?;
+        writeln!(file, "{}", output)?;
 
-    if echo {
-        println!("=== 主机 {} 执行结果 ===", host);
-        println!("{}", output);
-        println!("=====================");
+        if echo {
+            println!("=== 主机 {} 执行结果 ===", host);
+            println!("{}", output);
+            println!("=====================");
+        }
+    }else{
+        println!("导出为html、csv")
     }
+
 
     Ok(())
 }
@@ -83,7 +89,7 @@ fn save_result(host: &str, output: &str, echo: bool) -> Result<(), Box<dyn Error
 pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 记录开始时间
     let start_time = Instant::now();
-    
+    let mut dbcp_comm:bool = false;
     // 获取主机列表并同时计算主机数量
     let (hosts, total_hosts) = if let Some(file_path) = &args.file {
         let hosts = read_hosts_from_excel(file_path)?;
@@ -107,11 +113,17 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     ensure_output_dir()?;
 
     println!("🚀 开始执行SSH批量命令，共 {} 台主机。", total_hosts);
-    println!("📋 执行命令: {}", args.command);
+    let cmd_to_execute = args.command.clone().unwrap_or_else(|| DEFAULT_SSH_COMMAND.to_string());
+    if args.command.is_some() {
+        println!("📋 执行命令: {}", cmd_to_execute);
+    } else {
+        println!("📋 执行等级保护采集命令");
+        dbcp_comm = true;
+    }
 
     let mut tasks = vec![];
     for host in hosts {
-        let cmd = args.command.clone();
+        let cmd = cmd_to_execute.clone();
         let echo = args.echo;
         tasks.push(task::spawn(async move {
             let result = match connect_ssh(&host.host, host.port, &host.username, &host.password_or_key).await {
@@ -125,7 +137,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
                 Err(e) => format!("❌ 连接失败: {}", e),
             };
 
-            if let Err(e) = save_result(&host.host, &result, echo) {
+            if let Err(e) = save_result(&host.host, &result, echo, dbcp_comm) {
                 eprintln!("⚠️ 无法保存结果: {}", e);
             }
         }));
