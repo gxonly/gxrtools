@@ -1,5 +1,9 @@
 // src/constants.rs
 
-pub const DEFAULT_SSH_COMMAND: &str = r#"
-df -h
-"#;
+pub fn default_ssh_commands() -> Vec<String> {
+    vec![
+        "df -h".to_string(),
+        "uptime".to_string(),
+        "whoami".to_string(),
+    ]
+}

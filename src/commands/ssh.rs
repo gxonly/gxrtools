@@ -5,13 +5,13 @@ use ssh2::Session;
 use calamine::{Reader, Xlsx, open_workbook};
 use std::error::Error;
 use tokio::task;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{Write, Read};  // 添加了Read导入
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use crate::constants::DEFAULT_SSH_COMMAND;
-use crate::utils::ensure_output_dir;
+use crate::constants::default_ssh_commands;
+use serde_json::json;
 
 #[derive(Parser, Debug)]
 #[command(about = "SSH批量命令执行工具", long_about = None)]
@@ -37,8 +37,8 @@ pub struct SshArgs {
     pub password_or_key: Option<String>,
     
     /// 要执行的命令
-    #[arg(short = 'c', long)]
-    pub command: Option<String>,
+    #[arg(short = 'c', long, num_args = 1..)]
+    pub commands: Vec<String>,
     
     /// 并发线程数
     #[arg(short = 't', long, default_value = "4")]
@@ -57,40 +57,28 @@ pub struct HostInfo {
     password_or_key: String,
 }
 
-// fn ensure_output_dir() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-//     let output_dir = PathBuf::from("output/ssh");
-//     if !output_dir.exists() {
-//         fs::create_dir_all(&output_dir)?;
-//     }
-//     Ok(output_dir)
-// }
-
-fn save_result(host: &str, output: &str, echo: bool, dbcp_comm: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
-    if !dbcp_comm{
-        let output_dir = ensure_output_dir("output/ssh")?;
-        let filename = format!("{}.txt", host.replace(".", "_"));
-        let filepath = output_dir.join(filename);
-
-        let mut file = File::create(filepath)?;
-        writeln!(file, "{}", output)?;
-
-        if echo {
-            println!("=== 主机 {} 执行结果 ===", host);
-            println!("{}", output);
-            println!("=====================");
-        }
-    }else{
-        println!("导出为html、csv")
+fn ensure_output_dir() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let output_dir = PathBuf::from("output/ssh");
+    if !output_dir.exists() {
+        fs::create_dir_all(&output_dir)?;
     }
+    Ok(output_dir)
+}
 
+fn save_result(host: &str, result: serde_json::Value) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let output_dir = ensure_output_dir()?;
+    let filename = format!("{}.json", host.replace(".", "_"));
+    let filepath = output_dir.join(filename);
 
+    let mut file = File::create(filepath)?;
+    write!(file, "{}", serde_json::to_string_pretty(&result)?)?;
     Ok(())
 }
 
 pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 记录开始时间
     let start_time = Instant::now();
-    let mut dbcp_comm:bool = false;
+
     // 获取主机列表并同时计算主机数量
     let (hosts, total_hosts) = if let Some(file_path) = &args.file {
         let hosts = read_hosts_from_excel(file_path)?;
@@ -106,39 +94,76 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
                 .ok_or("使用 -H 时必须提供 -p 参数")?
                 .clone(),
         }];
-        (hosts, 1)
+        (hosts.clone(), 1)
     } else {
         return Err("必须指定 -H (单个主机) 或 -f (主机列表文件)".into());
     };
 
-    ensure_output_dir("output/ssh")?;
+    ensure_output_dir()?;
 
     println!("🚀 开始执行SSH批量命令，共 {} 台主机。", total_hosts);
-    let cmd_to_execute = args.command.clone().unwrap_or_else(|| DEFAULT_SSH_COMMAND.to_string());
-    if args.command.is_some() {
-        println!("📋 执行命令: {}", cmd_to_execute);
+
+    let cmds_to_execute = if !args.commands.is_empty() {
+        args.commands.clone()
     } else {
-        println!("📋 执行等级保护采集命令");
-        dbcp_comm = true;
+        default_ssh_commands()
+    };
+
+    if args.commands.is_empty() {
+        println!("📋 执行命令: {:?}", cmds_to_execute);
     }
 
     let mut tasks = vec![];
     for host in hosts {
-        let cmd = cmd_to_execute.clone();
+        let cmd = cmds_to_execute.clone();
         let echo = args.echo;
         tasks.push(task::spawn(async move {
             let result = match connect_ssh(&host.host, host.port, &host.username, &host.password_or_key).await {
-                Ok(session) => match execute_command(&session, &cmd).await {
-                    Ok((success, output)) => {
-                        let status = if success { "✅ 执行成功" } else { "❌ 执行失败" };
-                        format!("{}: {}", status, output)
+                Ok(session) => {
+                    let mut command_results = serde_json::Map::new();
+
+                    for single_cmd in &cmd {
+                        match execute_command(&session, single_cmd).await {
+                            Ok((success, output)) => {
+                                let status = if success { "✅ 成功" } else { "❌ 失败" };
+                                if echo {
+                                    println!("🖥️ [{}] 执行命令：{}", host.host, single_cmd);
+                                    println!("{}", output.trim());
+                                }
+                                command_results.insert(
+                                    single_cmd.clone(),
+                                    json!({
+                                        "status": status,
+                                        "output": output.trim(),
+                                    }),
+                                );
+                            }
+                            Err(e) => {
+                                command_results.insert(
+                                    single_cmd.clone(),
+                                    json!({
+                                        "status": "❌ 执行错误",
+                                        "error": e.to_string(),
+                                    }),
+                                );
+                            }
+                        }
                     }
-                    Err(e) => format!("❌ 命令执行失败: {}", e),
-                },
-                Err(e) => format!("❌ 连接失败: {}", e),
+
+                    // 生成最终的 JSON 输出
+                    json!({
+                        "host": host.host,
+                        "commands": command_results,
+                    })
+                }
+                Err(e) => json!({
+                    "host": host.host,
+                    "status": format!("❌ 连接失败: {}", e),
+                }),
             };
 
-            if let Err(e) = save_result(&host.host, &result, echo, dbcp_comm) {
+            // 保存结果到文件
+            if let Err(e) = save_result(&host.host, result) {
                 eprintln!("⚠️ 无法保存结果: {}", e);
             }
         }));
@@ -155,6 +180,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     Ok(())
 }
+
 
 async fn connect_ssh(host: &str, port: u16, username: &str, password_or_key: &str) -> Result<Arc<Session>, Box<dyn Error + Send + Sync>> {
     let addr = format!("{}:{}", host, port);
