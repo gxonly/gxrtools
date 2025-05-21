@@ -5,12 +5,13 @@ use ssh2::Session;
 use calamine::{Reader, Xlsx, open_workbook};
 use std::error::Error;
 use tokio::task;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{Write, Read};  // 添加了Read导入
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use crate::constants::DEFAULT_SSH_COMMAND;
+use crate::utils::ensure_output_dir;
 
 #[derive(Parser, Debug)]
 #[command(about = "SSH批量命令执行工具", long_about = None)]
@@ -56,17 +57,17 @@ pub struct HostInfo {
     password_or_key: String,
 }
 
-fn ensure_output_dir() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-    let output_dir = PathBuf::from("output/ssh");
-    if !output_dir.exists() {
-        fs::create_dir_all(&output_dir)?;
-    }
-    Ok(output_dir)
-}
+// fn ensure_output_dir() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+//     let output_dir = PathBuf::from("output/ssh");
+//     if !output_dir.exists() {
+//         fs::create_dir_all(&output_dir)?;
+//     }
+//     Ok(output_dir)
+// }
 
 fn save_result(host: &str, output: &str, echo: bool, dbcp_comm: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
     if !dbcp_comm{
-        let output_dir = ensure_output_dir()?;
+        let output_dir = ensure_output_dir("output/ssh")?;
         let filename = format!("{}.txt", host.replace(".", "_"));
         let filepath = output_dir.join(filename);
 
@@ -110,7 +111,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
         return Err("必须指定 -H (单个主机) 或 -f (主机列表文件)".into());
     };
 
-    ensure_output_dir()?;
+    ensure_output_dir("output/ssh")?;
 
     println!("🚀 开始执行SSH批量命令，共 {} 台主机。", total_hosts);
     let cmd_to_execute = args.command.clone().unwrap_or_else(|| DEFAULT_SSH_COMMAND.to_string());

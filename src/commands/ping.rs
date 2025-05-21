@@ -6,10 +6,10 @@ use std::time::Instant;
 use tokio::process::Command;
 use tokio::sync::Semaphore;
 use rust_xlsxwriter::{Workbook, Format};
-use std::fs;
-use std::path::Path;
 use chrono::Local;
 use std::error::Error;
+use crate::utils::ensure_output_dir;
+
 
 #[derive(Parser, Debug)]
 pub struct PingArgs {
@@ -140,11 +140,14 @@ async fn ping_concurrent_async(
     Ok(final_result)
 }
 
+
+
 fn save_to_excel(results: &[PingResult]) -> Result<String, Box<dyn Error + Send + Sync>> {
-    let output_dir = Path::new("output");
-    if !output_dir.exists() {
-        fs::create_dir_all(output_dir)?;
-    }
+    // let output_dir = Path::new("output");
+    // if !output_dir.exists() {
+    //     fs::create_dir_all(output_dir)?;
+    // }
+    let output_dir = ensure_output_dir("output/ping")?;
 
     let timestamp = Local::now().format("%Y%m%d%H%M").to_string();
     let filename = format!("{}_ping.xlsx", timestamp);
