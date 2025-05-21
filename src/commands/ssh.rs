@@ -209,25 +209,31 @@ async fn execute_command(
     session: &Session,
     command: &str,
 ) -> Result<(bool, String), Box<dyn Error + Send + Sync>> {
-    let mut channel = session.channel_session()?;
-    channel.exec(command)?;
-    
-    let mut output = String::new();
-    let mut buf = [0u8; 1024];
-    
-    loop {
-        let n = channel.read(&mut buf)?;
-        if n == 0 {
-            break;
+    let session = session.clone(); // 如果是 Arc<Session>
+    let command = command.to_string();
+
+    task::spawn_blocking(move || {
+        let mut channel = session.channel_session()?;
+        channel.exec(&command)?;
+
+        let mut output = String::new();
+        let mut buf = [0u8; 1024];
+
+        loop {
+            let n = channel.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            output.push_str(&String::from_utf8_lossy(&buf[..n]));
         }
-        output.push_str(&String::from_utf8_lossy(&buf[..n]));
-    }
-    
-    channel.wait_close()?;
-    let exit_status = channel.exit_status()?;
-    
-    Ok((exit_status == 0, output))
+
+        channel.wait_close()?;
+        let exit_status = channel.exit_status()?;
+
+        Ok((exit_status == 0, output))
+    }).await?
 }
+
 
 fn read_hosts_from_excel<P: AsRef<Path>>(path: P) -> Result<Vec<HostInfo>, Box<dyn Error + Send + Sync>> {
     let mut workbook: Xlsx<_> = open_workbook(path)?;
