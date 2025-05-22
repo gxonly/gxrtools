@@ -23,7 +23,7 @@ pub struct SshArgs {
     pub host: Option<String>,
     
     /// 从Excel文件读取主机列表(格式: 主机,端口,用户名,密码/密钥路径) (与 -H 互斥)
-    #[arg(short = 'f', long, default_value="linux.xlsx", conflicts_with = "host")]
+    #[arg(short = 'f', long, conflicts_with = "host")]
     pub file: Option<String>,
     
     /// SSH端口号 (当使用 -H 时有效)
