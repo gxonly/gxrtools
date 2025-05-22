@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use crate::constants::default_ssh_commands;
+use crate::utils::create_excel_template;
 use serde_json::json;
+use std::process;
 
 #[derive(Parser, Debug)]
 #[command(about = "SSH批量命令执行工具", long_about = None)]
@@ -21,7 +23,7 @@ pub struct SshArgs {
     pub host: Option<String>,
     
     /// 从Excel文件读取主机列表(格式: 主机,端口,用户名,密码/密钥路径) (与 -H 互斥)
-    #[arg(short = 'f', long, conflicts_with = "host")]
+    #[arg(short = 'f', long, default_value="linux.xlsx", conflicts_with = "host")]
     pub file: Option<String>,
     
     /// SSH端口号 (当使用 -H 时有效)
@@ -45,7 +47,7 @@ pub struct SshArgs {
     pub threads: usize,
 
     /// 输出到控制台，使用前提需指定自定义命令
-    #[arg(short = 'e', long, requires = "command")]
+    #[arg(short = 'e', long, requires = "commands")]
     pub echo: bool,
 }
 
@@ -78,7 +80,6 @@ fn save_result(host: &str, result: serde_json::Value) -> Result<(), Box<dyn Erro
 pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 记录开始时间
     let start_time = Instant::now();
-
     // 获取主机列表并同时计算主机数量
     let (hosts, total_hosts) = if let Some(file_path) = &args.file {
         let hosts = read_hosts_from_excel(file_path)?;
@@ -98,7 +99,6 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     } else {
         return Err("必须指定 -H (单个主机) 或 -f (主机列表文件)".into());
     };
-
     ensure_output_dir()?;
 
     println!("🚀 开始执行SSH批量命令，共 {} 台主机。", total_hosts);
@@ -236,11 +236,16 @@ async fn execute_command(
 
 
 fn read_hosts_from_excel<P: AsRef<Path>>(path: P) -> Result<Vec<HostInfo>, Box<dyn Error + Send + Sync>> {
+    if !path.as_ref().exists(){
+        let comms = vec!["主机地址".to_string(),"端口".to_string(),"用户名".to_string(),"密码或密钥".to_string(),];
+        let _ = create_excel_template(path,comms);
+        process::exit(1)
+    }
     let mut workbook: Xlsx<_> = open_workbook(path)?;
     let range = workbook
         .worksheet_range("Sheet1")
         .ok_or("找不到工作表 'Sheet1'")??;
-
+    
     let mut hosts = Vec::new();
     
     for row in range.rows().skip(1) {
