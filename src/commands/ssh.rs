@@ -239,6 +239,7 @@ fn read_hosts_from_excel<P: AsRef<Path>>(path: P) -> Result<Vec<HostInfo>, Box<d
     if !path.as_ref().exists(){
         let comms = vec!["主机地址".to_string(),"端口".to_string(),"用户名".to_string(),"密码或密钥".to_string(),];
         let _ = create_excel_template(path,comms);
+        println!("文件不存在，已创建默认模板文件，第一行标题不需删除");
         process::exit(1)
     }
     let mut workbook: Xlsx<_> = open_workbook(path)?;
