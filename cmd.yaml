@@ -1,0 +1,5 @@
+ssh_commands:
+  - df -h
+  - uptime
+  - whoami
+  - pwd
