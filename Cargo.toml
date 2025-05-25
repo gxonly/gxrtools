@@ -4,15 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }   # 命令行工具
-tokio = { version = "1", features = ["full"] }      # 异步程序
-ssh2 = "0.9"       # 用于 SSH 连接
-ping = "0.5"        # 用于 ping 操作
-rust_xlsxwriter = "0.6"     # 写xlsx文件
-chrono = "0.4"
-calamine = "0.20"   # 读xlsx文件
-async-std = "1.12"  # 用于异步TCP连接
+axum = "0.6"
+hyper = "0.14.32"
+tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
-toml = "0.7"
 serde_json = "1.0"
 serde_yaml = "0.9"
+clap = { version = "4.5", features = ["derive"] }
+ssh2 = "0.9"
+ping = "0.5"
+rust_xlsxwriter = "0.6"
+chrono = "0.4"
+calamine = "0.20"
+async-std = "1.12"
+toml = "0.7"
+encoding_rs = "0.8"

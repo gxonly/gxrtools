@@ -5,13 +5,13 @@ use ssh2::Session;
 use calamine::{Reader, Xlsx, open_workbook};
 use std::error::Error;
 use tokio::task;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{Write, Read};  // 添加了Read导入
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use crate::constants::default_ssh_commands;
-use crate::utils::create_excel_template;
+use crate::utils::{create_excel_template,ensure_output_dir};
 use serde_json::json;
 use std::process;
 
@@ -59,16 +59,9 @@ pub struct HostInfo {
     password_or_key: String,
 }
 
-fn ensure_output_dir() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-    let output_dir = PathBuf::from("output/ssh");
-    if !output_dir.exists() {
-        fs::create_dir_all(&output_dir)?;
-    }
-    Ok(output_dir)
-}
 
 fn save_result(host: &str, result: serde_json::Value) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let output_dir = ensure_output_dir()?;
+    let output_dir = ensure_output_dir("output/ssh")?;
     let filename = format!("{}.json", host.replace(".", "_"));
     let filepath = output_dir.join(filename);
 
@@ -99,7 +92,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     } else {
         return Err("必须指定 -H (单个主机) 或 -f (主机列表文件)".into());
     };
-    ensure_output_dir()?;
+    ensure_output_dir("output/ssh")?;
 
     println!("🚀 开始执行SSH批量命令，共 {} 台主机。", total_hosts);
 
