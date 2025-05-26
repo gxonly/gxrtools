@@ -1,5 +1,4 @@
 /target
 /output
+/.idea
 *.xlsx
-*.ps1
-Cargo.lock
