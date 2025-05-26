@@ -44,22 +44,24 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     let start = Instant::now();
-    let mut results: Vec<PingResult> = Vec::new();
+    let results: Vec<PingResult>;
+    let ip_list = parse_targets(&args.target)?;
+    println!("🔍 共解析出 {} 个目标 IP", ip_list.len());
 
-    if args.target.contains('/') {
-        match generate_ips_from_cidr(&args.target) {
-            Ok(ips) => {
-                println!("🔍 正在并发 ping 网段：{}（{}个IP）", args.target, ips.len());
-                results = ping_concurrent_async(ips, args.timeout, args.concurrency).await?;
-            }
-            Err(e) => eprintln!("❌ 无效的网段格式: {}", e),
-        }
-    } else {
-        println!("🔍 正在 ping 单个 IP: {}", args.target);
-        let result = ping_ip_async(&args.target, args.timeout).await?;
-        results.push(result);
-    }
-
+    // if args.target.contains('/') {
+    //     match generate_ips_from_cidr(&args.target) {
+    //         Ok(ips) => {
+    //             println!("🔍 正在并发 ping 网段：{}（{}个IP）", args.target, ips.len());
+    //             results = ping_concurrent_async(ips, args.timeout, args.concurrency).await?;
+    //         }
+    //         Err(e) => eprintln!("❌ 无效的网段格式: {}", e),
+    //     }
+    // } else {
+    //     println!("🔍 正在 ping 单个 IP: {}", args.target);
+    //     let result = ping_ip_async(&args.target, args.timeout).await?;
+    //     results.push(result);
+    // }
+    results = ping_concurrent_async(ip_list, args.timeout, args.concurrency).await?;
     if args.echo {
         println!("\n📋 扫描结果：");
         for r in &results {
@@ -74,6 +76,54 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     Ok(())
 }
+
+fn parse_targets(targets: &str) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+    let mut all_ips = Vec::new();
+    for target in targets.split(',') {
+        let target = target.trim();
+        if target.contains('/') {
+            // CIDR 格式
+            let cidr_ips = generate_ips_from_cidr(target)?;
+            all_ips.extend(cidr_ips);
+        } else if let Some(_) = target.rfind('-') {
+            // IP 范围格式：192.168.1.5-10
+            let range_ips = generate_ips_from_range(target)?;
+            all_ips.extend(range_ips);
+        } else {
+            // 单个 IP
+            let ip = Ipv4Addr::from_str(target)
+                .map_err(|_| format!("无效的 IP 地址: {}", target))?;
+            all_ips.push(ip.to_string());
+        }
+    }
+
+    Ok(all_ips)
+}
+
+
+fn generate_ips_from_range(range_str: &str) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
+    let dash_pos = range_str.rfind('-').ok_or("无效的 IP 范围格式")?;
+    let (base, end) = range_str.split_at(dash_pos);
+    let base_ip = Ipv4Addr::from_str(base).map_err(|_| "无效的 IP 地址")?;
+    let end_part = &end[1..]; // 去掉 '-'
+
+    let base_parts: Vec<u8> = base_ip.octets().to_vec();
+    let end_last = end_part.parse::<u8>().map_err(|_| "IP 范围结束值无效")?;
+
+    if end_last < base_parts[3] {
+        return Err("IP 范围结束值必须大于开始值".into());
+    }
+
+    let mut ips = Vec::new();
+    for i in base_parts[3]..=end_last {
+        let ip = Ipv4Addr::new(base_parts[0], base_parts[1], base_parts[2], i);
+        ips.push(ip.to_string());
+    }
+
+    Ok(ips)
+}
+
+
 
 async fn ping_ip_async(ip: &str, timeout_secs: u64) -> Result<PingResult, Box<dyn Error + Send + Sync>> {
     let timeout_str = format!("{}", timeout_secs * 1000);
@@ -143,10 +193,6 @@ async fn ping_concurrent_async(
 
 
 fn save_to_excel(results: &[PingResult]) -> Result<String, Box<dyn Error + Send + Sync>> {
-    // let output_dir = Path::new("output");
-    // if !output_dir.exists() {
-    //     fs::create_dir_all(output_dir)?;
-    // }
     let output_dir = ensure_output_dir("output/ping")?;
 
     let timestamp = Local::now().format("%Y%m%d%H%M").to_string();
@@ -170,17 +216,17 @@ fn save_to_excel(results: &[PingResult]) -> Result<String, Box<dyn Error + Send 
     Ok(filepath.to_string_lossy().to_string())
 }
 
-fn generate_ips_from_cidr(cidr: &str) -> Result<Vec<String>, String> {
+fn generate_ips_from_cidr(cidr: &str) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
     let parts: Vec<&str> = cidr.split('/').collect();
     if parts.len() != 2 {
-        return Err("CIDR 格式错误".to_string());
+        return Err("CIDR 格式错误".into());
     }
 
     let base_ip = Ipv4Addr::from_str(parts[0]).map_err(|_| "无效的IP地址".to_string())?;
     let subnet_mask = parts[1].parse::<u8>().map_err(|_| "无效的子网掩码".to_string())?;
 
     if subnet_mask > 32 {
-        return Err("子网掩码不能大于32".to_string());
+        return Err("子网掩码不能大于32".into());
     }
 
     let ip_u32 = u32::from(base_ip);
