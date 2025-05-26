@@ -14,6 +14,8 @@ use hyper::{Server, server::conn::AddrIncoming};
 use tokio::fs;
 use std::fs as stdfs;
 use local_ip_address::local_ip;
+use std::net::IpAddr;
+use std::str::FromStr;
 
 #[derive(Debug, Args)]
 pub struct WindowsArgs {
@@ -23,12 +25,19 @@ pub struct WindowsArgs {
     /// 修改端口，默认3000
     #[arg(short, long, default_value = "3000")]
     pub port: u16,
+    /// 绑定本机IP，默认自动识别，多网卡可能异常
+    #[arg(short, long)]
+    pub ip: Option<String>,
 }
 
 pub async fn run(args: &WindowsArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let script_path = args.file.clone().unwrap_or_else(|| "windows.ps1".to_string());
     // 获取本机 IP 地址
-    let local_ip = local_ip()?; // 例如 192.168.100.1
+    let local_ip = match &args.ip {
+    Some(ip_str) => IpAddr::from_str(ip_str)?,
+    None => local_ip()?,
+    };
+    println!("当前接收绑定IP地址为：{local_ip}");
     let report_url = format!("http://{}:{}/report", local_ip,&args.port);
     let mut script_content = stdfs::read_to_string(&script_path)
         .unwrap_or_else(|_| String::new());
@@ -97,7 +106,7 @@ async fn report_result(ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(payload)
     let output_dir = ensure_output_dir("output/windows").expect("创建目录失败");
     let filename = format!("{}.json", ip);
     let filepath = output_dir.join(filename);
-    println!("客户端IP: {}", ip);
+    println!("已获取客户端: {}数据", ip);
     match serde_json::to_string_pretty(&payload) {
         Ok(pretty) => {
             if let Err(e) = fs::write(&filepath, pretty).await {
