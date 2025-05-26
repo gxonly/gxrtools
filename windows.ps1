@@ -134,13 +134,12 @@ $commandResult = $combinedResult | ConvertTo-Json -Depth 3 -Compress
 
 
 # 接口地址
-$url = "http://192.168.1.3:12321/report"
+$url = "http://192.168.101.97:3000/report"
 
 # 构造请求头（如需授权，可以加 Authorization）
 $headers = @{
     "Content-Type" = "application/json"
     "Authorization" = "Bearer YOUR_API_TOKEN"  # 如不需要可去掉此行
-    Connection = 'close'
 }
 
 # 发送 POST 请求
