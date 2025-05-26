@@ -13,11 +13,11 @@ struct Cli {
 enum Commands {
     /// 执行 ping 操作
     Ping(ping::PingArgs),
-    /// 执行 SSH 命令（等保基线采集）
-    Ssh(ssh::SshArgs),
-    /// 执行MySQL命令（等保基线采集）
+    /// 执行 Linux 命令（等保基线采集）
+    Linux(ssh::SshArgs),
+    /// 执行 MySQL 命令（等保基线采集）
     Mysql(mysql::MysqlArgs),
-    /// 执行Windows命令（等保基线采集）
+    /// 执行 Windows 命令（等保基线采集）
     Windows(windows::WindowsArgs)
 }
 
@@ -32,7 +32,7 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Commands::Ssh(args) => {
+        Commands::Linux(args) => {
             if let Err(e) = ssh::run(&args).await {
                 eprintln!("SSH执行错误: {}", e);
                 std::process::exit(1);
