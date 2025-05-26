@@ -13,22 +13,52 @@ use crate::utils::ensure_output_dir;
 use hyper::{Server, server::conn::AddrIncoming};
 use tokio::fs;
 use std::fs as stdfs;
+use local_ip_address::local_ip;
 
 #[derive(Debug, Args)]
 pub struct WindowsArgs {
+    /// 指定ps1脚本路径
     #[arg(short, long)]
     pub file: Option<String>,
+    /// 修改端口，默认3000
+    #[arg(short, long, default_value = "3000")]
+    pub port: u16,
 }
 
 pub async fn run(args: &WindowsArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let script_path = args.file.clone().unwrap_or_else(|| "windows.ps1".to_string());
+    // 获取本机 IP 地址
+    let local_ip = local_ip()?; // 例如 192.168.100.1
+    let report_url = format!("http://{}:{}/report", local_ip,&args.port);
+    let mut script_content = stdfs::read_to_string(&script_path)
+        .unwrap_or_else(|_| String::new());
+
+    let url_line = format!("$url = \"{}\"\n", report_url);
+
+    // 使用简单的正则替换或插入（你也可以使用更精确的处理）
+    if script_content.contains("$url = ") {
+        script_content = script_content
+            .lines()
+            .map(|line| {
+                if line.trim_start().starts_with("$url = ") {
+                    url_line.clone()
+                } else {
+                    format!("{}\n", line)
+                }
+            })
+            .collect();
+    } else {
+        // 没有 $url 定义，插入到文件开头
+        script_content = format!("{}\n{}", url_line, script_content);
+    }
+    stdfs::write(&script_path, script_content)?;
 
     let app = Router::new()
         .route("/script", get(get_script))
         .with_state(Arc::new(script_path))
         .route("/report", post(report_result));
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
     println!("Server running at http://{}", addr);
 
     // 使用 hyper 0.14 的 listener 和 Server

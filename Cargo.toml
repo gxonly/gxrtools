@@ -19,3 +19,5 @@ calamine = "0.20"
 async-std = "1.12"
 toml = "0.7"
 encoding_rs = "0.8"
+local-ip-address = "0.5"
+
