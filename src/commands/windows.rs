@@ -3,7 +3,7 @@ use axum::{
     extract::{connect_info::ConnectInfo, State},
     response::{IntoResponse, Response},
     Json, Router,
-    http::{StatusCode, header},
+    http::{StatusCode, header, HeaderMap, HeaderValue},
 };
 use serde_json::Value;
 use std::{net::SocketAddr, sync::Arc};
@@ -64,6 +64,8 @@ pub async fn run(args: &WindowsArgs) -> Result<(), Box<dyn std::error::Error + S
 
     let app = Router::new()
         .route("/script", get(get_script))
+        // .with_state(Arc::new(script_path))
+        .route("/windows", get(get_windows_script))
         .with_state(Arc::new(script_path))
         .route("/report", post(report_result));
 
@@ -77,6 +79,28 @@ pub async fn run(args: &WindowsArgs) -> Result<(), Box<dyn std::error::Error + S
         .await?;
 
     Ok(())
+}
+
+async fn get_windows_script(State(script_path): State<Arc<String>>) -> Response {
+    match stdfs::read_to_string(&*script_path) {
+        Ok(script) => {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/octet-stream"),
+            );
+            headers.insert(
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_static("attachment; filename=\"windows.ps1\""),
+            );
+            (headers, script).into_response()
+        }
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "无法读取 PowerShell 脚本".to_string(),
+        )
+            .into_response(),
+    }
 }
 
 async fn get_script(State(path): State<Arc<String>>) -> Response {

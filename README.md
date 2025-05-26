@@ -49,7 +49,7 @@ gxtools.exe linux -f linux.xlsx -c "ls" -e
 
 ## windows
 
-默认存储于output/windows/ip.json
+默认存储于output/windows/ip.json，依赖windows中powershell版本
 
 ~~~bash
 # 参数
@@ -65,5 +65,13 @@ Options:
 gxtools.exe windows		# 默认运行，自动识别网卡，使用本机3000端口
 gxtools.exe windows -i 192.168.1.1 -p 12321		# 绑定网卡，并使用12321端口
 ~~~
+
+~~~bash
+登录windows之后使用powershell执行以下命令，修改ip和端口
+
+iex (Invoke-RestMethod -Uri "http://192.168.101.97:3000/script")
+~~~
+
+
 
 ## MySQL（待定）
