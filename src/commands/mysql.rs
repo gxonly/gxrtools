@@ -11,7 +11,7 @@ pub struct MysqlArgs {
     #[arg(short = 'f', long, conflicts_with = "host")]
     pub file: Option<String>,
     
-    /// SSH端口号 (当使用 -H 时有效)
+    /// MySQL端口号 (当使用 -H 时有效)
     #[arg(short = 'P', long, default_value = "22", requires = "host")]
     pub port: u16,
     
