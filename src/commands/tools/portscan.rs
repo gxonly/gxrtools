@@ -1,9 +1,10 @@
-use crate::utils::{parse_targets, save_to_excel,parse_ports};
+use crate::utils::{parse_ports, parse_targets, save_to_excel};
 use clap::Parser;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, Semaphore};
 
@@ -22,7 +23,7 @@ pub struct PortScan {
     pub full: bool,
 
     /// 最大并发数
-    #[arg(short = 'c', long, default_value = "100")]
+    #[arg(short = 'c', long, default_value = "1000")]
     pub concurrency: usize,
 }
 
@@ -33,6 +34,27 @@ pub struct PortScanResult {
     pub ip: String,
     pub port: u16,
     pub status: String,
+    pub banner: String,
+}
+
+// 统一的 banner 清洗函数
+fn extract_banner_text(buf: &[u8]) -> String {
+    let clean_utf8 = match std::str::from_utf8(buf) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            buf.iter()
+                .filter(|&&b| b != 0 && (b.is_ascii_graphic() || b == b'\n' || b == b'\r' || b == b' '))
+                .map(|&b| b as char)
+                .collect::<String>()
+        }
+    };
+
+    clean_utf8
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+        .to_string()
 }
 
 pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -66,16 +88,55 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
                     Err(_) => return,
                 };
 
-                let status =
+                let (status, banner) =
                     match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr))
                         .await
                     {
-                        Ok(Ok(_)) => "开放",
-                        _ => "关闭",
+                        Ok(Ok(mut stream)) => {
+                            let mut buf = vec![0; 1024];
+                            let mut banner = String::new();
+
+                            // 第一次尝试直接读取（被动 banner）
+                            if let Ok(n) =
+                                tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf))
+                                    .await
+                            {
+
+                                if let Ok(n) = n {
+                                    if n > 0 {
+                                        banner = extract_banner_text(&buf[..n]);
+                                    }
+                                }
+                            }
+
+                            // 如果没有获取到且是常见 web 端口，主动发送 GET 请求
+                            if banner.trim().is_empty() {
+                                let _ = stream
+                                    .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+                                    .await;
+
+                                let mut buf = vec![0; 1024];
+                                if let Ok(n) = tokio::time::timeout(
+                                    Duration::from_secs(2),
+                                    stream.read(&mut buf),
+                                )
+                                .await
+                                {
+                                    if let Ok(n) = n {
+                                        if n > 0 {
+                                            banner = extract_banner_text(&buf[..n]);
+                                        }
+                                    }
+                                }
+                            }
+
+                            ("开放", banner)
+                        }
+                        _ => ("关闭", String::new()),
                     };
 
                 if status == "开放" {
-                    println!("{} => 端口 {:<5} 开放", ip, port);
+                    println!("{} => {:<5} | 开放 | Banner: {}", ip, port, banner);
                 }
 
                 let mut result = result_arc.lock().await;
@@ -83,6 +144,7 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
                     ip,
                     port,
                     status: status.to_string(),
+                    banner,
                 });
 
                 drop(permit);
@@ -101,8 +163,15 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
     // 输出到 Excel
     save_to_excel(
         &results,
-        &["IP地址", "端口", "状态"],
-        |r| vec![r.ip.clone(), r.port.to_string(), r.status.clone()],
+        &["IP地址", "端口", "状态", "Banner"],
+        |r| {
+            vec![
+                r.ip.clone(),
+                r.port.to_string(),
+                r.status.clone(),
+                r.banner.clone(),
+            ]
+        },
         "portscan",
         "portscan",
     )?;
