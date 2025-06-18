@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, Semaphore};
+use crate::commands::tools::port_handshake::*;
 
 #[derive(Parser, Debug)]
 pub struct PortScan {
@@ -25,6 +26,10 @@ pub struct PortScan {
     /// 最大并发数
     #[arg(short = 'c', long, default_value = "1000")]
     pub concurrency: usize,
+
+    /// 输出到excel
+    #[arg(long, default_value = "false")]
+    pub output: bool,
 }
 
 const DEFAULT_PORTS: &[u16] = &[22, 23, 80, 443, 3389, 3306, 8080, 8443, 53, 21];
@@ -39,22 +44,51 @@ pub struct PortScanResult {
 
 // 统一的 banner 清洗函数
 fn extract_banner_text(buf: &[u8]) -> String {
-    let clean_utf8 = match std::str::from_utf8(buf) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
-            buf.iter()
-                .filter(|&&b| b != 0 && (b.is_ascii_graphic() || b == b'\n' || b == b'\r' || b == b' '))
-                .map(|&b| b as char)
-                .collect::<String>()
-        }
-    };
+    if is_mysql_handshake(buf) {
+        return extract_mysql_banner(buf);
+    } else if is_rdp_response(buf) {
+        return  extract_rdp_banner(buf);
+    }
+    // else if is_redis_banner(buf) {
+    //     return extract_redis_banner(buf);
+    // } else if is_mssql_banner(buf) {
+    //     return extract_mssql_banner(buf);
+    // }
 
-    clean_utf8
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("")
-        .to_string()
+    // HTTP(S) 检测
+    if let Ok(text) = std::str::from_utf8(buf) {
+        if text.starts_with("HTTP/") {
+            let mut status_line = None;
+            let mut server_line = None;
+
+            for line in text.lines() {
+                if status_line.is_none() && line.starts_with("HTTP/") {
+                    status_line = Some(line.trim());
+                } else if line.to_ascii_lowercase().starts_with("server:") {
+                    server_line = Some(line.trim());
+                }
+
+                if status_line.is_some() && server_line.is_some() {
+                    break;
+                }
+            }
+
+            return match (status_line, server_line) {
+                (Some(status), Some(server)) => format!("{} | {}", status, server),
+                (Some(status), None) => status.to_string(),
+                _ => "HTTP Response".to_string(),
+            };
+        }
+    }
+    // fallback：尝试直接解码为字符串
+    match std::str::from_utf8(buf) {
+        Ok(s) => s.trim().to_string(),
+        Err(_) => buf
+            .iter()
+            .filter(|&&b| b.is_ascii_graphic() || b == b' ')
+            .map(|&b| b as char)
+            .collect::<String>(),
+    }
 }
 
 pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
@@ -135,6 +169,7 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
                         _ => ("关闭", String::new()),
                     };
 
+
                 if status == "开放" {
                     println!("{} => {:<5} | 开放 | Banner: {}", ip, port, banner);
                 }
@@ -161,20 +196,22 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
     let results = Arc::try_unwrap(result_arc).unwrap().into_inner();
 
     // 输出到 Excel
-    save_to_excel(
-        &results,
-        &["IP地址", "端口", "状态", "Banner"],
-        |r| {
-            vec![
-                r.ip.clone(),
-                r.port.to_string(),
-                r.status.clone(),
-                r.banner.clone(),
-            ]
-        },
-        "portscan",
-        "portscan",
-    )?;
+    if args.output {
+        save_to_excel(
+            &results,
+            &["IP地址", "端口", "状态", "Banner"],
+            |r| {
+                vec![
+                    r.ip.clone(),
+                    r.port.to_string(),
+                    r.status.clone(),
+                    r.banner.clone(),
+                ]
+            },
+            "portscan",
+            "portscan",
+        )?;
+    }
     let elapsed = start.elapsed();
     println!(
         "✅ 扫描完成，共发现 {} 个开放端口",
@@ -184,3 +221,6 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     Ok(())
 }
+
+
+

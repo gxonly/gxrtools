@@ -23,6 +23,10 @@ pub struct PingArgs {
     /// 是否打印结果到终端
     #[arg(short = 'e', long)]
     pub echo: bool,
+
+    /// 输出到excel
+    #[arg(long, default_value = "false")]
+    pub output: bool,
 }
 
 #[derive(Debug)]
@@ -51,13 +55,15 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 
     // 输出到ping的excel中
-    save_to_excel(
-        &results,
-        &["IP地址", "状态"],
-        |item| vec![item.ip.clone(), item.status.clone()],
-        "ping",
-        "ping",
-    )?;
+    if args.output {
+        save_to_excel(
+            &results,
+            &["IP地址", "状态"],
+            |item| vec![item.ip.clone(), item.status.clone()],
+            "ping",
+            "ping",
+        )?;
+    }
     let elapsed = start.elapsed();
     println!("⏱️ 总耗时：{elapsed:.2?}");
 
