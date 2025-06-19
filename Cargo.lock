@@ -863,6 +863,7 @@ dependencies = [
  "encoding_rs",
  "futures",
  "hyper",
+ "lazy_static",
  "local-ip-address",
  "ping",
  "reqwest",

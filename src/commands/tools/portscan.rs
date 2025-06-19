@@ -1,13 +1,14 @@
+use crate::commands::tools::port_handshake::*;
 use crate::utils::{parse_ports, parse_targets, save_to_excel};
 use clap::Parser;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, Semaphore};
-use crate::commands::tools::port_handshake::*;
+use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
 pub struct PortScan {
@@ -23,6 +24,10 @@ pub struct PortScan {
     #[arg(long, default_value = "false")]
     pub full: bool,
 
+    /// 深度检测
+    #[arg(long, default_value = "false")]
+    pub deep: bool,
+
     /// 最大并发数
     #[arg(short = 'c', long, default_value = "1000")]
     pub concurrency: usize,
@@ -34,6 +39,26 @@ pub struct PortScan {
 
 const DEFAULT_PORTS: &[u16] = &[22, 23, 80, 443, 3389, 3306, 8080, 8443, 53, 21];
 
+lazy_static::lazy_static! {
+    static ref DEFAULT_PORT_BANNERS: HashMap<u16, &'static str> = {
+        let mut m = HashMap::new();
+        m.insert(21, "FTP");
+        m.insert(22, "SSH");
+        m.insert(23, "Telnet");
+        m.insert(25, "SMTP");
+        m.insert(53, "DNS");
+        m.insert(80, "HTTP");
+        m.insert(110, "POP3");
+        m.insert(143, "IMAP");
+        m.insert(443, "HTTPS");
+        m.insert(3306, "MySQL");
+        m.insert(3389, "RDP");
+        m.insert(6379, "Redis");
+        m.insert(8080, "HTTP-Alt");
+        m
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct PortScanResult {
     pub ip: String,
@@ -42,54 +67,23 @@ pub struct PortScanResult {
     pub banner: String,
 }
 
-// 统一的 banner 清洗函数
-fn extract_banner_text(buf: &[u8]) -> String {
-    if is_mysql_handshake(buf) {
-        return extract_mysql_banner(buf);
-    } else if is_rdp_response(buf) {
-        return  extract_rdp_banner(buf);
+// 智能探测模块（最小 MVP）
+#[warn(unused_variables)]
+pub async fn try_protocol_probes(stream: &mut TcpStream, _buf: &mut [u8]) -> Option<String> {
+    // 未来这里可以顺序尝试多个协议
+
+    // 尝试 RDP 探测
+    if let Some(banner) = send_rdp_probe(stream).await {
+        return Some(banner);
     }
-    // else if is_redis_banner(buf) {
-    //     return extract_redis_banner(buf);
-    // } else if is_mssql_banner(buf) {
-    //     return extract_mssql_banner(buf);
-    // }
 
-    // HTTP(S) 检测
-    if let Ok(text) = std::str::from_utf8(buf) {
-        if text.starts_with("HTTP/") {
-            let mut status_line = None;
-            let mut server_line = None;
-
-            for line in text.lines() {
-                if status_line.is_none() && line.starts_with("HTTP/") {
-                    status_line = Some(line.trim());
-                } else if line.to_ascii_lowercase().starts_with("server:") {
-                    server_line = Some(line.trim());
-                }
-
-                if status_line.is_some() && server_line.is_some() {
-                    break;
-                }
-            }
-
-            return match (status_line, server_line) {
-                (Some(status), Some(server)) => format!("{} | {}", status, server),
-                (Some(status), None) => status.to_string(),
-                _ => "HTTP Response".to_string(),
-            };
-        }
-    }
-    // fallback：尝试直接解码为字符串
-    match std::str::from_utf8(buf) {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => buf
-            .iter()
-            .filter(|&&b| b.is_ascii_graphic() || b == b' ')
-            .map(|&b| b as char)
-            .collect::<String>(),
-    }
+    // 其他协议可以继续加
+    None
 }
+
+
+// 统一的 banner 清洗函数
+
 
 pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
     let start = Instant::now();
@@ -108,13 +102,13 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
     let result_arc = Arc::new(Mutex::new(Vec::new()));
 
     let mut handles = Vec::new();
-
+    let deep = args.deep;
     for ip in ips {
         for &port in &ports {
             let permit = sem.clone().acquire_owned().await?;
             let ip = ip.clone();
             let result_arc = result_arc.clone();
-
+            let deep = deep;
             let handle = tokio::spawn(async move {
                 let socket = format!("{}:{}", ip, port);
                 let addr: SocketAddr = match socket.parse() {
@@ -131,11 +125,8 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
                             let mut banner = String::new();
 
                             // 第一次尝试直接读取（被动 banner）
-                            if let Ok(n) =
-                                tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf))
-                                    .await
+                            if let Ok(n) = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf)).await
                             {
-
                                 if let Ok(n) = n {
                                     if n > 0 {
                                         banner = extract_banner_text(&buf[..n]);
@@ -143,35 +134,42 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
                                 }
                             }
 
-                            // 如果没有获取到且是常见 web 端口，主动发送 GET 请求
+                            // 自定义特殊扫描
                             if banner.trim().is_empty() {
-                                let _ = stream
-                                    .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
-                                    .await;
-
-                                let mut buf = vec![0; 1024];
-                                if let Ok(n) = tokio::time::timeout(
-                                    Duration::from_secs(2),
-                                    stream.read(&mut buf),
-                                )
-                                .await
-                                {
-                                    if let Ok(n) = n {
-                                        if n > 0 {
-                                            banner = extract_banner_text(&buf[..n]);
-                                        }
+                                if deep {
+                                    if let Some(probed_banner) = try_protocol_probes(&mut stream, &mut buf).await {
+                                        banner = probed_banner;
+                                    }
+                                } else {
+                                    // 👇 非 deep 时查表获取默认 banner
+                                    if let Some(service) = DEFAULT_PORT_BANNERS.get(&port) {
+                                        banner = service.to_string();
                                     }
                                 }
                             }
+
+
+                            // Step 3: HTTP 探测（作为兜底）
+                            if banner.trim().is_empty() {
+                                if let Some(http_banner) = try_http_probe(&mut stream, &ip, &mut buf).await {
+                                    banner = http_banner;
+                                } else if let Ok(Ok(mut retry_stream)) =
+                                    tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(addr)).await
+                                {
+                                    if let Some(http_banner) = try_http_probe(&mut retry_stream, &ip, &mut buf).await {
+                                        banner = http_banner;
+                                    }
+                                }
+                            }
+
 
                             ("开放", banner)
                         }
                         _ => ("关闭", String::new()),
                     };
 
-
                 if status == "开放" {
-                    println!("{} => {:<5} | 开放 | Banner: {}", ip, port, banner);
+                    println!("{} => {:<5} | 开放 | 服务: {}", ip, port, banner);
                 }
 
                 let mut result = result_arc.lock().await;
@@ -199,7 +197,7 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
     if args.output {
         save_to_excel(
             &results,
-            &["IP地址", "端口", "状态", "Banner"],
+            &["IP地址", "端口", "状态", "服务"],
             |r| {
                 vec![
                     r.ip.clone(),
@@ -221,6 +219,3 @@ pub async fn run(args: &PortScan) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     Ok(())
 }
-
-
-
