@@ -3,3 +3,6 @@ ssh_commands:
   - uptime
   - whoami
   - pwd
+mysql_commands:
+  - SELECT VERSION();
+  - SELECT user, host FROM mysql.user;

@@ -53,6 +53,7 @@ pub fn extract_rdp_banner(buf: &[u8]) -> String {
     }
 }
 
+// 识别rdp协议，暂存
 pub async fn send_rdp_probe(stream: &mut TcpStream) -> Option<String> {
     const RDP_NEGOTIATION_REQUEST: &[u8] = &[
         0x03, 0x00, 0x00, 0x13,
