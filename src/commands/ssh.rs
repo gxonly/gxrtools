@@ -10,7 +10,7 @@ use std::io::{Write, Read};  // 添加了Read导入
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use crate::constants::default_ssh_commands;
+use crate::constants::load_commands_from_yaml;
 use crate::utils::{create_excel_template,ensure_output_dir};
 use serde_json::json;
 use std::process;
@@ -33,6 +33,11 @@ pub struct SshArgs {
     /// 用户名 (当使用 -H 时有效)
     #[arg(short = 'u', long, default_value = "root", requires = "host")]
     pub username: String,
+
+    /// 自定义yaml文件
+    #[arg(long, default_value = "cmd.yaml")]
+    pub yaml: String,
+    
     
     /// 密码或私钥路径 (当使用 -H 时必需)
     #[arg(short = 'p', long, requires = "host")]
@@ -99,7 +104,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     let cmds_to_execute = if !args.commands.is_empty() {
         args.commands.clone()
     } else {
-        default_ssh_commands()
+        load_commands_from_yaml(&args.yaml,"linux_commands")
     };
 
     if args.commands.is_empty() {

@@ -1,5 +1,5 @@
 // src/commands/mysql.rs
-use crate::constants::default_mysql_commands;
+use crate::constants::load_commands_from_yaml;
 use crate::utils::{create_excel_template, ensure_output_dir};
 use calamine::{open_workbook, Reader, Xlsx};
 use clap::Parser;
@@ -36,6 +36,10 @@ pub struct MysqlArgs {
     /// 密码 (当使用 -H 时必需)
     #[arg(short = 'p', long, requires = "host")]
     pub password: String,
+
+    /// 自定义yaml文件
+    #[arg(long, default_value = "cmd.yaml")]
+    pub yaml: String,
 
     /// 要执行的SQL命令，多命令时，每个命令使用一个-c
     #[arg(short = 'c', long, num_args = 1..)]
@@ -80,7 +84,7 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("开始执行，共 {} 个实例", db_list.len());
 
     let queries = if args.commands.is_empty() {
-        default_mysql_commands()
+        load_commands_from_yaml(&args.yaml,"mysql_commands")
     } else {
         args.commands.clone()
     };

@@ -1,4 +1,4 @@
-ssh_commands:
+linux_commands:
   - df -h
   - uptime
   - whoami
