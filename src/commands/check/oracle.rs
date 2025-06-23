@@ -1,11 +1,7 @@
-// src/commands/mysql.rs
 use crate::constants::load_commands_from_yaml;
 use crate::utils::{create_excel_template, ensure_output_dir};
 use calamine::{open_workbook, Reader, Xlsx};
 use clap::Parser;
-use mysql_async::prelude::*;
-use mysql_async::{Opts, Pool};
-use serde::Serialize;
 use serde_json::{json, Value};
 use std::error::Error;
 use std::fs::File;
@@ -13,43 +9,61 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 use tokio::task;
+use oracle::{Connection, Error as OracleError};
+
+use std::env;
+use std::path::PathBuf;
+/// 尝试设置 Oracle 客户端路径（失败也不会 panic）
+pub fn try_set_oracle_client_path() -> Result<(), String> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let instantclient_dir = exe_dir.join("instantclient");
+    if !instantclient_dir.exists() {
+        return Err(format!("未找到 Oracle instantclient 路径: {}", instantclient_dir.display()));
+    }
+
+    let old_path = std::env::var("PATH").unwrap_or_default();
+
+    unsafe {
+        env::set_var("PATH", format!("{};{}", instantclient_dir.display(), old_path));
+    }
+
+    Ok(())
+}
 
 #[derive(Parser, Debug)]
-#[command(about = "MySQL安全配置采集工具", long_about = None)]
-pub struct MysqlArgs {
-    /// 远程主机的IP地址 (与 -f 互斥)
+#[command(about = "Oracle 安全配置采集工具", long_about = None)]
+pub struct OracleArgs {
     #[arg(short = 'H', long, conflicts_with = "file")]
     pub host: Option<String>,
 
-    /// 从Excel文件读取主机列表 (格式: 主机,端口,用户名,密码) (与 -H 互斥)
     #[arg(short = 'f', long, conflicts_with = "host")]
     pub file: Option<String>,
 
-    /// MySQL端口号 (当使用 -H 时有效)
-    #[arg(short = 'P', long, default_value = "3306", requires = "host")]
+    #[arg(short = 'P', long, default_value = "1521", requires = "host")]
     pub port: u16,
 
-    /// 用户名 (当使用 -H 时有效)
-    #[arg(short = 'u', long, default_value = "root", requires = "host")]
+    #[arg(short = 'u', long, default_value = "system", requires = "host")]
     pub username: String,
 
-    /// 密码 (当使用 -H 时必需)
     #[arg(short = 'p', long, requires = "host")]
     pub password: String,
 
-    /// 自定义yaml文件
+    #[arg(short = 's', long, default_value = "ORCL", requires = "host")]
+    pub service_name: String,
+
     #[arg(long, default_value = "cmd.yaml")]
     pub yaml: String,
 
-    /// 要执行的SQL命令，多命令时，每个命令使用一个-c
     #[arg(short = 'c', long, num_args = 1..)]
     pub commands: Vec<String>,
 
-    /// 并发线程数
     #[arg(short = 't', long, default_value = "4")]
     pub threads: usize,
 
-    /// 输出到控制台，使用前提需指定自定义命令
     #[arg(short = 'e', long, requires = "commands")]
     pub echo: bool,
 }
@@ -60,15 +74,12 @@ pub struct DbInstanceInfo {
     port: u16,
     username: String,
     password: String,
+    service_name: String,
 }
 
-#[derive(Debug, Serialize)]
-struct QueryResult {
-    status: String,
-    output: String,
-}
-pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
+pub async fn run(args: &OracleArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     let start_time = Instant::now();
+
     let db_list = if let Some(file) = &args.file {
         read_hosts_from_excel(file)?
     } else {
@@ -77,14 +88,15 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
             port: args.port,
             username: args.username.clone(),
             password: args.password.clone(),
+            service_name: args.service_name.clone(),
         }]
     };
 
-    ensure_output_dir("output/mysql")?;
+    ensure_output_dir("output/oracle")?;
     println!("开始执行，共 {} 个实例", db_list.len());
 
     let queries = if args.commands.is_empty() {
-        load_commands_from_yaml(&args.yaml,"mysql_commands")
+        load_commands_from_yaml(&args.yaml, "oracle_commands")
     } else {
         args.commands.clone()
     };
@@ -102,7 +114,7 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
                     "error": e.to_string(),
                 }),
             };
-            let filename = format!("output/mysql/{}.json", db.host.replace(".", "_"));
+            let filename = format!("output/oracle/{}.json", db.host.replace(".", "_"));
             let mut file = File::create(filename).unwrap();
             file.write_all(serde_json::to_string_pretty(&result).unwrap().as_bytes())
                 .unwrap();
@@ -120,57 +132,61 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-async fn connect_and_execute(
+pub async fn connect_and_execute(
     db: &DbInstanceInfo,
     commands: &[String],
     echo: bool,
 ) -> Result<Value, Box<dyn Error + Send + Sync>> {
-    let url = format!(
-        "mysql://{}:{}@{}:{}/mysql",
-        db.username, db.password, db.host, db.port
-    );
-    let opts = Opts::from_url(&url)?; // &url 是 &str
-    let pool = Pool::new(opts);
-    let mut conn = pool.get_conn().await?;
-
     let mut output = serde_json::Map::new();
 
     for cmd in commands {
-        match conn.query(cmd).await {
-            Ok(rows) => {
-                let formatted_rows: Vec<String> = rows
-                    .into_iter()
-                    .map(|row: mysql_async::Row| format!("{:?}", row))
-                    .collect();
+        let db = db.clone();
+        let cmd = cmd.clone();
+        let host_clone = db.host.clone();
+        let cmd_for_log = cmd.clone();
+        let result = task::spawn_blocking(move || -> Result<Vec<String>, OracleError> {
+            let conn = Connection::connect(
+                &db.username,
+                &db.password,
+                &format!("{}:{}/{}", db.host, db.port, db.service_name),
+            )?;
 
-                if echo {
-                    println!("[{}] {}", db.host, cmd);
-                    for line in &formatted_rows {
-                        println!("{}", line);
-                    }
+            let mut stmt = conn.statement(&cmd).build()?;
+            let rows = stmt.query(&[])?;
+
+            let mut formatted = Vec::new();
+            let column_info = rows.column_info();
+            let column_count = column_info.len();
+
+            for row_result in rows {
+                let row = row_result?;
+                let mut line = Vec::new();
+                for i in 0..column_count {
+                    let val: String = row.get::<usize, Option<String>>(i)?.unwrap_or_else(|| "NULL".to_string());
+                    line.push(val);
                 }
-
-                output.insert(
-                    cmd.clone(),
-                    json!(QueryResult {
-                    status: "✅ 成功".to_string(),
-                    output: formatted_rows.join("\n"),
-                }),
-                );
+                formatted.push(line.join(" | "));
             }
-            Err(e) => {
-                output.insert(
-                    cmd.clone(),
-                    json!(QueryResult {
-                    status: "❌ 错误".to_string(),
-                    output: e.to_string(),
-                }),
-                );
+
+            Ok(formatted)
+        }).await??;
+
+        if echo {
+            println!("[{}] {}", host_clone, cmd_for_log);
+            for line in &result {
+                println!("{}", line);
             }
         }
+
+        output.insert(
+            cmd_for_log.clone(),
+            json!({
+                "status": "✅ 成功",
+                "output": result.join("\n"),
+            }),
+        );
     }
 
-    conn.disconnect().await?;
     Ok(json!({
         "host": db.host,
         "results": output,
@@ -188,6 +204,7 @@ fn read_hosts_from_excel<P: AsRef<Path>>(
                 "端口".to_string(),
                 "用户名".to_string(),
                 "密码".to_string(),
+                "服务名".to_string(),
             ],
         );
         println!("模板已生成，请填写后重新运行：{}", path.as_ref().display());
@@ -202,14 +219,15 @@ fn read_hosts_from_excel<P: AsRef<Path>>(
     let mut hosts = vec![];
 
     for row in range.rows().skip(1) {
-        if row.len() < 4 {
+        if row.len() < 5 {
             continue;
         }
 
         let host = row[0].get_string().unwrap_or("").to_string();
-        let port = row[1].get_float().unwrap_or(3306.0) as u16;
-        let username = row[2].get_string().unwrap_or("root").to_string();
+        let port = row[1].get_float().unwrap_or(1521.0) as u16;
+        let username = row[2].get_string().unwrap_or("system").to_string();
         let password = row[3].get_string().unwrap_or("").to_string();
+        let service_name = row[4].get_string().unwrap_or("ORCL").to_string();
 
         if host.is_empty() || password.is_empty() {
             continue;
@@ -220,6 +238,7 @@ fn read_hosts_from_excel<P: AsRef<Path>>(
             port,
             username,
             password,
+            service_name,
         });
     }
 

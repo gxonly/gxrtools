@@ -1,5 +1,3 @@
-pub mod ping;
-pub mod ssh;
-pub mod mysql;
-pub mod windows;
-pub mod tools;
+pub mod net;
+pub mod pentest;
+pub mod check;

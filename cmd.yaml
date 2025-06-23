@@ -6,3 +6,6 @@ linux_commands:
 mysql_commands:
   - SELECT VERSION();
   - SELECT user, host FROM mysql.user;
+oracle_commands:
+  - SELECT * FROM v$version
+  - SELECT username, account_status FROM dba_users

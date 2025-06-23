@@ -7,3 +7,4 @@ port.ps1
 powershellcode
 Cargo.lock
 test.*
+instantclient
