@@ -25,14 +25,14 @@ enum Commands {
     },
 
     /// 渗透测试模块
-    Tools {
+    Pentest {
         #[command(subcommand)]
-        subcommand: ToolsCommands,
+        subcommand: PentestCommands,
     },
 }
 
 #[derive(Subcommand, Debug)]
-enum ToolsCommands {
+enum PentestCommands {
     /// 端口扫描工具
     Portscan(pentest::portscan::PortScan),
 }
@@ -104,9 +104,9 @@ async fn main() {
             }
         }
 
-        Commands::Tools { subcommand } => {
+        Commands::Pentest { subcommand } => {
             match subcommand {
-                ToolsCommands::Portscan(args) => {
+                PentestCommands::Portscan(args) => {
                     if let Err(e) = pentest::portscan::run(&args).await {
                         eprintln!("Portscan执行错误: {}", e);
                         std::process::exit(1);

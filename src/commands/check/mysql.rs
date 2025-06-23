@@ -94,6 +94,7 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     for db in db_list {
         let cmds = queries.clone();
         let echo = args.echo;
+        let host = db.host.clone();
         handles.push(task::spawn(async move {
             let result = match connect_and_execute(&db, &cmds, echo).await {
                 Ok(json) => json,
@@ -106,6 +107,12 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
             let mut file = File::create(filename).unwrap();
             file.write_all(serde_json::to_string_pretty(&result).unwrap().as_bytes())
                 .unwrap();
+            // 根据返回内容判断是否有错误
+            if let Some(err_msg) = result.get("error") {
+                println!("❌ [{}] 采集失败，原因: {}", host, err_msg);
+            } else {
+                println!("✅ [{}] 采集完成", host);
+            }
         }));
     }
 

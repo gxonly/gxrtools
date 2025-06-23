@@ -37,33 +37,34 @@ pub fn try_set_oracle_client_path() -> Result<(), String> {
 #[derive(Parser, Debug)]
 #[command(about = "Oracle 安全配置采集工具", long_about = None)]
 pub struct OracleArgs {
+    /// 远程主机的IP地址 (与 -f 互斥)
     #[arg(short = 'H', long, conflicts_with = "file")]
     pub host: Option<String>,
-
+    /// 从Excel文件读取主机列表 (格式: 主机,端口,用户名,密码) (与 -H 互斥)
     #[arg(short = 'f', long, conflicts_with = "host")]
     pub file: Option<String>,
-
+    /// Oracle端口号 (当使用 -H 时有效)
     #[arg(short = 'P', long, default_value = "1521", requires = "host")]
     pub port: u16,
-
+    /// 用户名 (当使用 -H 时有效)
     #[arg(short = 'u', long, default_value = "system", requires = "host")]
     pub username: String,
-
+    /// 密码 (当使用 -H 时必需)
     #[arg(short = 'p', long, requires = "host")]
     pub password: String,
-
+    /// 自定义服务名
     #[arg(short = 's', long, default_value = "ORCL", requires = "host")]
     pub service_name: String,
-
+    /// 自定义yaml文件
     #[arg(long, default_value = "cmd.yaml")]
     pub yaml: String,
-
+    /// 要执行的SQL命令，多命令时，每个命令使用一个-c
     #[arg(short = 'c', long, num_args = 1..)]
     pub commands: Vec<String>,
-
+    /// 并发线程数
     #[arg(short = 't', long, default_value = "4")]
     pub threads: usize,
-
+    /// 输出到控制台，使用前提需指定自定义命令
     #[arg(short = 'e', long, requires = "commands")]
     pub echo: bool,
 }
@@ -106,6 +107,7 @@ pub async fn run(args: &OracleArgs) -> Result<(), Box<dyn Error + Send + Sync>> 
     for db in db_list {
         let cmds = queries.clone();
         let echo = args.echo;
+        let host = db.host.clone();
         handles.push(task::spawn(async move {
             let result = match connect_and_execute(&db, &cmds, echo).await {
                 Ok(json) => json,
@@ -118,6 +120,12 @@ pub async fn run(args: &OracleArgs) -> Result<(), Box<dyn Error + Send + Sync>> 
             let mut file = File::create(filename).unwrap();
             file.write_all(serde_json::to_string_pretty(&result).unwrap().as_bytes())
                 .unwrap();
+            // 根据返回内容判断是否有错误
+            if let Some(err_msg) = result.get("error") {
+                println!("❌ [{}] 采集失败，原因: {}", host, err_msg);
+            } else {
+                println!("✅ [{}] 采集完成", host);
+            }
         }));
     }
 

@@ -1,6 +1,8 @@
 # gxrtools
 
-## Ping
+
+## 网络测试模块
+### Ping
 
 默认结果存储至output/ping/日期.xlsx中
 
@@ -8,7 +10,7 @@
 # 参数
 执行 ping 操作
 
-Usage: gxtools.exe ping [OPTIONS] --target <TARGET>
+Usage: gxtools.exe net ping [OPTIONS] --target <TARGET>
 
 Options:
   -t, --target <TARGET>            IP地址或网段（CIDR），如：192.168.1.1 或 192.168.1.0/24
@@ -18,16 +20,18 @@ Options:
   -h, --help                       Print help
 
 # 例子
-gxtools.exe ping -t 192.168.100.1,192.168.100.3-5,192.168.200.1/24
+gxtools.exe net ping -t 192.168.100.1,192.168.100.3-5,192.168.200.1/24
 ~~~
 
-## Linux（ssh方式）
+## 等保核查模块
+
+### Linux（ssh方式）
 
 默认存储于output/ssh/ip.json
 
 ~~~bash
 # 参数
-Usage: gxtools.exe linux [OPTIONS]
+Usage: gxtools.exe check linux [OPTIONS]
 
 Options:
   -H, --host <HOST>                        远程主机的IP地址 (与 -f 互斥)
@@ -41,19 +45,18 @@ Options:
   -h, --help                               Print help
   
 # 例子
-gxtools.exe linux -H 192.168.100.1 -P 22 -p mima -u root -e -c "pwd"
-gxtools.exe linux -f linux.xlsx		# 默认命令
-gxtools.exe linux -f linux.xlsx -c "ls" -e
-
+gxtools.exe check linux -H 192.168.100.1 -P 22 -p mima -u root -e -c "pwd"
+gxtools.exe check linux -f linux.xlsx		# 默认命令
+gxtools.exe check linux -f linux.xlsx -c "ls" -e
 ~~~
 
-## windows
+### windows
 
-默认存储于output/windows/ip.json，依赖windows中powershell版本
+默认存储于output/windows/ip.json，依赖windows中powershell版本，需根据需求手动调整powershell脚本，脚本编码UTF-16LE
 
 ~~~bash
 # 参数
-Usage: gxtools.exe windows [OPTIONS]
+Usage: gxtools.exe check windows [OPTIONS]
 
 Options:
   -f, --file <FILE>  指定ps1脚本路径
@@ -62,8 +65,8 @@ Options:
   -h, --help         Print help
 
 # 例子
-gxtools.exe windows		# 默认运行，自动识别网卡，使用本机3000端口
-gxtools.exe windows -i 192.168.1.1 -p 12321		# 绑定网卡，并使用12321端口
+gxtools.exe check windows		# 默认运行，自动识别网卡，使用本机3000端口
+gxtools.exe check windows -i 192.168.1.1 -p 12321		# 绑定网卡，并使用12321端口
 ~~~
 
 ~~~bash
@@ -74,4 +77,85 @@ iex (Invoke-RestMethod -Uri "http://192.168.101.97:3000/script")
 
 
 
-## MySQL（待定）
+### MySQL
+
+默认存储于output/mysql/ip.json
+
+~~~bash
+# 参数
+Usage: gxtools.exe check mysql [OPTIONS] --host <HOST> --password <PASSWORD>
+
+Options:
+  -H, --host <HOST>             远程主机的IP地址 (与 -f 互斥)
+  -f, --file <FILE>             从Excel文件读取主机列表 (格式: 主机,端口,用户名,密码) (与 -H 互斥)
+  -P, --port <PORT>             MySQL端口号 (当使用 -H 时有效) [default: 3306]
+  -u, --username <USERNAME>     用户名 (当使用 -H 时有效) [default: root]
+  -p, --password <PASSWORD>     密码 (当使用 -H 时必需)
+      --yaml <YAML>             自定义yaml文件 [default: cmd.yaml]
+  -c, --commands <COMMANDS>...  要执行的SQL命令，多命令时，每个命令使用一个-c
+  -t, --threads <THREADS>       并发线程数 [default: 4]
+  -e, --echo                    输出到控制台，使用前提需指定自定义命令
+  -h, --help                    Print help
+  
+# 例子
+gxtools.exe check mysql -H 192.168.100.1 -P 3306 -p mima  -e -c "select version()"
+gxtools.exe check mysql -f mysql.xlsx		# 默认命令
+gxtools.exe check mysql -f mysql.xlsx -c "ls" -e
+~~~
+
+
+
+### Oracle
+
+默认存储于output/oracle/ip.json，使用oracle依赖oci等工具，需再oracle官网中进行下载，并放置于instantclient目录下
+>下载路径https://download.oracle.com/otn/nt/instantclient/122010/instantclient-basic-windows.x64-12.2.0.1.0.zip
+
+~~~bash
+# 参数
+Usage: gxtools.exe check oracle [OPTIONS] --host <HOST> --password <PASSWORD>
+
+Options:
+  -H, --host <HOST>                  远程主机的IP地址 (与 -f 互斥)
+  -f, --file <FILE>                  从Excel文件读取主机列表 (格式: 主机,端口,用户名,密码) (与 -H 互斥)
+  -P, --port <PORT>                  Oracle端口号 (当使用 -H 时有效) [default: 1521]
+  -u, --username <USERNAME>          用户名 (当使用 -H 时有效) [default: system]
+  -p, --password <PASSWORD>          密码 (当使用 -H 时必需)
+  -s, --service-name <SERVICE_NAME>  自定义服务名 [default: ORCL]
+      --yaml <YAML>                  自定义yaml文件 [default: cmd.yaml]
+  -c, --commands <COMMANDS>...       要执行的SQL命令，多命令时，每个命令使用一个-c
+  -t, --threads <THREADS>            并发线程数 [default: 4]
+  -e, --echo                         输出到控制台，使用前提需指定自定义命令
+  -h, --help                         Print help
+
+  
+# 例子
+gxtools.exe check oracle -H 192.168.100.1 -P 1521 -p mima  -e -c 'SELECT * FROM v$version'
+gxtools.exe check oracle -f oracle.xlsx		# 默认命令
+~~~
+
+## 
+
+## 渗透测试模块
+### 端口扫描
+
+默认存储于output/portscan/时间戳.json
+
+~~~bash
+# 参数
+Usage: gxtools.exe pentest portscan [OPTIONS] --targets <TARGETS>
+
+Options:
+  -t, --targets <TARGETS>          IP 或 IP 段（支持CIDR、范围、多个IP用逗号隔开）
+  -p, --ports <PORTS>              自定义端口（用逗号隔开，例如：80,443,22）
+      --full                       是否扫描全部端口（1-65535）
+  -c, --concurrency <CONCURRENCY>  最大并发数 [default: 1000]
+      --output                     输出到excel
+  -h, --help                       Print help
+  
+# 例子
+gxtools.exe pentest portscan -t 192.168.100.1
+gxtools.exe pentest portscan -t 192.168.1.2,192.168.100.1/24 -p 135,137-139-445
+# 全端口，并输出到excel中
+gxtools.exe pentest portscan -t 192.168.1.2 --full --output
+~~~
+
