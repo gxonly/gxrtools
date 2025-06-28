@@ -35,8 +35,10 @@ enum Commands {
 enum PentestCommands {
     /// 端口扫描工具
     Portscan(pentest::portscan::PortScan),
-    /// poc测试
+    /// poc模块测试
     Poctest(pentest::poctest::PocTest),
+    /// URL 路径探测
+    Urlscan(pentest::urlscan::UrlScan),
 }
 
 #[derive(Subcommand, Debug)]
@@ -117,6 +119,12 @@ async fn main() {
                 PentestCommands::Poctest(args) => {
                     if let Err(e) = pentest::poctest::run(&args).await {
                         eprintln!("Portscan执行错误: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                PentestCommands::Urlscan(args) => {
+                    if let Err(e) = pentest::urlscan::run(&args).await {
+                        eprintln!("Urlscan错误: {}", e);
                         std::process::exit(1);
                     }
                 }

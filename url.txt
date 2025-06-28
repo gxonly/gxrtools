@@ -1,0 +1,13 @@
+/
+/admin
+/login
+/dashboard
+/uploads
+/config
+/api/v1
+/api/v2
+/backup
+/test
+/dev
+/.git
+/.git/config
