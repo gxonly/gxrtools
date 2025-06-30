@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use gxtools::commands::{net, pentest,check};
+use gxtools::commands::{check, net, pentest};
 
 #[derive(Parser, Debug)]
 #[command(name = "myapp")]
@@ -16,8 +16,6 @@ enum Commands {
         #[command(subcommand)]
         subcommand: NetCommands,
     },
-
-
     ///等保核查模块
     Check {
         #[command(subcommand)]
@@ -53,10 +51,12 @@ enum CheckCommands {
     Linux(check::ssh::SshArgs),
     /// 执行 MySQL 命令（等保基线采集）
     Mysql(check::mysql::MysqlArgs),
-    /// 执行 Oracle 命令（等保基线采集），待处理兼容新问题
+    /// 执行 Oracle 命令（等保基线采集）
     Oracle(check::oracle::OracleArgs),
     /// 执行 Windows 命令（等保基线采集）
     Windows(check::windows::WindowsArgs),
+    /// 执行 Redis 命令（等保基线采集）
+    Redis(check::redis::RedisArgs),
 }
 
 #[tokio::main]
@@ -64,71 +64,71 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Net { subcommand } => {
-            match subcommand {
-                NetCommands::Ping(args) => {
-                    if let Err(e) = net::ping::run(&args).await {
-                        eprintln!("Ping扫描: {}", e);
-                        std::process::exit(1);
-                    }
+        Commands::Net { subcommand } => match subcommand {
+            NetCommands::Ping(args) => {
+                if let Err(e) = net::ping::run(&args).await {
+                    eprintln!("Ping扫描: {}", e);
+                    std::process::exit(1);
                 }
             }
-        }
+        },
 
-        Commands::Check { subcommand } => {
-            match subcommand {
-                CheckCommands::Linux(args) => {
-                    if let Err(e) = check::ssh::run(&args).await {
-                        eprintln!("SSH执行错误: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                CheckCommands::Mysql(args) => {
-                    if let Err(e) = check::mysql::run(&args).await {
-                        eprintln!("MySQL执行错误: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                CheckCommands::Oracle(args) => {
-                    if let Err(e) = check::oracle::try_set_oracle_client_path() {
-                        eprintln!("❌ Oracle 模块初始化失败: {}", e);
-                        std::process::exit(1);
-                    }
-                    if let Err(e) = check::oracle::run(&args).await {
-                        eprintln!("Oracle执行错误: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                CheckCommands::Windows(args) => {
-                    if let Err(e) = check::windows::run(&args).await {
-                        eprintln!("Windows执行错误: {}", e);
-                        std::process::exit(1);
-                    }
+        Commands::Check { subcommand } => match subcommand {
+            CheckCommands::Linux(args) => {
+                if let Err(e) = check::ssh::run(&args).await {
+                    eprintln!("SSH执行错误: {}", e);
+                    std::process::exit(1);
                 }
             }
-        }
+            CheckCommands::Mysql(args) => {
+                if let Err(e) = check::mysql::run(&args).await {
+                    eprintln!("MySQL执行错误: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            CheckCommands::Oracle(args) => {
+                if let Err(e) = check::oracle::try_set_oracle_client_path() {
+                    eprintln!("❌ Oracle 模块初始化失败: {}", e);
+                    std::process::exit(1);
+                }
+                if let Err(e) = check::oracle::run(&args).await {
+                    eprintln!("Oracle执行错误: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            CheckCommands::Windows(args) => {
+                if let Err(e) = check::windows::run(&args).await {
+                    eprintln!("Windows执行错误: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            CheckCommands::Redis(args) => {
+                if let Err(e) = check::redis::run(&args).await {
+                    eprintln!("Redis执行错误: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
 
-        Commands::Pentest { subcommand } => {
-            match subcommand {
-                PentestCommands::Portscan(args) => {
-                    if let Err(e) = pentest::portscan::run(&args).await {
-                        eprintln!("Portscan执行错误: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                PentestCommands::Poctest(args) => {
-                    if let Err(e) = pentest::poctest::run(&args).await {
-                        eprintln!("Portscan执行错误: {}", e);
-                        std::process::exit(1);
-                    }
-                }
-                PentestCommands::Urlscan(args) => {
-                    if let Err(e) = pentest::urlscan::run(&args).await {
-                        eprintln!("Urlscan错误: {}", e);
-                        std::process::exit(1);
-                    }
+        Commands::Pentest { subcommand } => match subcommand {
+            PentestCommands::Portscan(args) => {
+                if let Err(e) = pentest::portscan::run(&args).await {
+                    eprintln!("Portscan执行错误: {}", e);
+                    std::process::exit(1);
                 }
             }
-        }
+            PentestCommands::Poctest(args) => {
+                if let Err(e) = pentest::poctest::run(&args).await {
+                    eprintln!("Portscan执行错误: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            PentestCommands::Urlscan(args) => {
+                if let Err(e) = pentest::urlscan::run(&args).await {
+                    eprintln!("Urlscan错误: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
     }
 }

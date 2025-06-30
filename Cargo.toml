@@ -24,3 +24,4 @@ oracle = "0.6"
 libloading = "0.8"
 anyhow = "1.0"
 reqwest = "0.12.15"
+redis = { version = "0.24", features = ["aio", "tokio-comp"] }

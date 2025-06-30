@@ -9,3 +9,9 @@ mysql_commands:
 oracle_commands:
   - SELECT * FROM v$version
   - SELECT username, account_status FROM dba_users
+redis_commands:
+  - "redis-cli CONFIG GET bind"
+  - "redis-cli CONFIG GET requirepass"
+  - "redis-cli CONFIG GET protected-mode"
+  - "redis-cli CONFIG GET tls-port"
+  - "redis-cli INFO"
