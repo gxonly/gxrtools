@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use gxtools::commands::net::trace;
 use gxtools::commands::{check, net, pentest};
 
 #[derive(Parser, Debug)]
@@ -43,6 +44,8 @@ enum PentestCommands {
 enum NetCommands {
     /// Ping扫描工具
     Ping(net::ping::PingArgs),
+    /// 路由追踪工具
+    Trace(net::trace::TraceArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -68,6 +71,12 @@ async fn main() {
             NetCommands::Ping(args) => {
                 if let Err(e) = net::ping::run(&args).await {
                     eprintln!("Ping扫描: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            NetCommands::Trace(args) => {
+                if let Err(e) = trace::run(&args) {
+                    eprintln!("Trace: {}", e);
                     std::process::exit(1);
                 }
             }
