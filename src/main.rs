@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use gxtools::commands::net::trace;
 use gxtools::commands::{check, net, pentest};
+use gxtools::commands::pentest::screenshot;
+use crate::PentestCommands::Screenshot;
 
 #[derive(Parser, Debug)]
 #[command(name = "myapp")]
@@ -38,6 +40,8 @@ enum PentestCommands {
     Poctest(pentest::poctest::PocTest),
     /// URL 路径探测
     Urlscan(pentest::urlscan::UrlScan),
+    ///URL截图
+    Screenshot(screenshot::ScreenshotArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -62,6 +66,14 @@ enum CheckCommands {
     Redis(check::redis::RedisArgs),
 }
 
+fn handle_error<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) {
+    if let Err(e) = result {
+        eprintln!("❌ {}: {}", context, e);
+        std::process::exit(1);
+    }
+}
+
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -69,74 +81,45 @@ async fn main() {
     match cli.command {
         Commands::Net { subcommand } => match subcommand {
             NetCommands::Ping(args) => {
-                if let Err(e) = net::ping::run(&args).await {
-                    eprintln!("Ping扫描: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(net::ping::run(&args).await, "Ping 扫描失败");
+
             }
             NetCommands::Trace(args) => {
-                if let Err(e) = trace::run(&args) {
-                    eprintln!("Trace: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(trace::run(&args), "Trace 失败");
             }
         },
 
         Commands::Check { subcommand } => match subcommand {
             CheckCommands::Linux(args) => {
-                if let Err(e) = check::ssh::run(&args).await {
-                    eprintln!("SSH执行错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(check::ssh::run(&args).await, "SSH执行错误");
             }
             CheckCommands::Mysql(args) => {
-                if let Err(e) = check::mysql::run(&args).await {
-                    eprintln!("MySQL执行错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(check::mysql::run(&args).await, "MySQL执行错误");
             }
             CheckCommands::Oracle(args) => {
-                if let Err(e) = check::oracle::try_set_oracle_client_path() {
-                    eprintln!("❌ Oracle 模块初始化失败: {}", e);
-                    std::process::exit(1);
-                }
-                if let Err(e) = check::oracle::run(&args).await {
-                    eprintln!("Oracle执行错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(check::oracle::try_set_oracle_client_path(), "Oracle 模块初始化失败");
+                handle_error(check::oracle::run(&args).await, "Oracle执行错误");
             }
             CheckCommands::Windows(args) => {
-                if let Err(e) = check::windows::run(&args).await {
-                    eprintln!("Windows执行错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(check::windows::run(&args).await, "Windows执行错误");
             }
             CheckCommands::Redis(args) => {
-                if let Err(e) = check::redis::run(&args).await {
-                    eprintln!("Redis执行错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(check::redis::run(&args).await, "Redis执行错误");
             }
         },
 
         Commands::Pentest { subcommand } => match subcommand {
             PentestCommands::Portscan(args) => {
-                if let Err(e) = pentest::portscan::run(&args).await {
-                    eprintln!("Portscan执行错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(pentest::portscan::run(&args).await, "Portscan执行错误");
             }
             PentestCommands::Poctest(args) => {
-                if let Err(e) = pentest::poctest::run(&args).await {
-                    eprintln!("Portscan执行错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(pentest::poctest::run(&args).await, "Poctest执行错误");
             }
             PentestCommands::Urlscan(args) => {
-                if let Err(e) = pentest::urlscan::run(&args).await {
-                    eprintln!("Urlscan错误: {}", e);
-                    std::process::exit(1);
-                }
+                handle_error(pentest::urlscan::run(&args).await, "Urlscan错误");
+            }
+            Screenshot(args) => {
+                handle_error(pentest::screenshot::run(&args).await, "Screenshot错误");
             }
         },
     }
