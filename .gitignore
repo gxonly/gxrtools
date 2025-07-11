@@ -8,3 +8,4 @@ powershellcode
 Cargo.lock
 test.*
 instantclient
+chromiumoxide
