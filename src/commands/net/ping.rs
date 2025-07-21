@@ -1,5 +1,5 @@
+use crate::utils::{ScanProgress, parse_targets, save_to_excel};
 use clap::Parser;
-use crate::utils::{parse_targets, save_to_excel};
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Instant;
@@ -45,12 +45,20 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     let start = Instant::now();
     let results: Vec<PingResult>;
     let ip_list = parse_targets(&args.target)?;
-    println!("🔍 共解析出 {} 个目标 IP", ip_list.len());
-    results = ping_concurrent_async(ip_list, args.timeout, args.concurrency).await?;
+    println!("🔍 共测试 {} 个 IP", ip_list.len());
+    let mut progress = ScanProgress::new(ip_list.len() as u64);
+    results = ping_concurrent_async(ip_list, args.timeout, args.concurrency,&mut progress).await?;
+    let mut success_count = 0;
+
     if args.echo {
-        println!("\n📋 扫描结果：");
+        // println!("\n📋 扫描结果：");
+        progress.println("📋 扫描结果：".to_string());
         for r in &results {
-            println!("{} => {}", r.ip, r.status);
+            if r.status == "成功" {
+                // println!("{} => {}", r.ip, r.status);
+                progress.println(format!("{} => {}", r.ip, r.status));
+                success_count += 1;
+            }
         }
     }
 
@@ -65,8 +73,8 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
         )?;
     }
     let elapsed = start.elapsed();
-    println!("⏱️ 总耗时：{elapsed:.2?}");
-
+    progress.finish();
+    println!("⏱️ 总耗时：{elapsed:.2?}，共识别存活主机{success_count}个。");
     Ok(())
 }
 
@@ -103,16 +111,18 @@ async fn ping_ip_async(
     })
 }
 
-async fn ping_concurrent_async(
+pub async fn ping_concurrent_async(
     ips: Vec<String>,
     timeout: u64,
     concurrency: usize,
+    progress: &mut ScanProgress,
 ) -> Result<Vec<PingResult>, Box<dyn Error + Send + Sync>> {
     let sem = Arc::new(Semaphore::new(concurrency));
     let result_arc = Arc::new(tokio::sync::Mutex::new(Vec::new()));
     let mut handles = Vec::new();
 
     for ip in ips {
+        let progress = progress.clone();
         let permit = sem.clone().acquire_owned().await?;
         let ip_clone = ip.clone();
         let result_clone = Arc::clone(&result_arc);
@@ -122,6 +132,7 @@ async fn ping_concurrent_async(
             if let Ok(res) = r {
                 let mut vec = result_clone.lock().await;
                 vec.push(res);
+                progress.inc();
             }
             drop(permit);
         });

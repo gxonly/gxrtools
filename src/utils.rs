@@ -6,6 +6,43 @@ use std::fs;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::sync::Arc;
+
+/// 扫描进度控制结构体
+#[derive(Clone)]
+pub struct ScanProgress {
+    pub pb: Arc<ProgressBar>,
+}
+
+impl ScanProgress {
+    /// 初始化新的进度条
+    pub fn new(total: u64) -> Self {
+        let pb = ProgressBar::new(total);
+        pb.set_style(
+            ProgressStyle::with_template(
+                "[{elapsed_precise}] [{wide_bar:.cyan/blue}] {percent}% ({eta})",
+            )
+                .unwrap(),
+        );
+        Self {
+            pb: Arc::new(pb),
+        }
+    }
+    /// 进度 +1
+    pub fn inc(&self) {
+        self.pb.inc(1);
+    }
+    /// 在进度条上方输出信息（不会破坏进度条）
+    pub fn println<S: AsRef<str>>(&self, msg: S) {
+        let _ = self.pb.println(msg.as_ref());
+    }
+    /// 完成并关闭进度条
+    pub fn finish(&self) {
+        self.pb.finish();
+    }
+}
+
 
 //判断文件夹是否存在并创建文件夹
 pub fn ensure_output_dir(path: &str) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
