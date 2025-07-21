@@ -134,7 +134,7 @@ $commandResult = $combinedResult | ConvertTo-Json -Depth 3 -Compress
 
 
 # 接口地址
-$url = "http://10.10.10.110:3000/report"
+$url = "http://192.168.101.84:3000/report"
 
 # 构造请求头（如需授权，可以加 Authorization）
 $headers = @{
