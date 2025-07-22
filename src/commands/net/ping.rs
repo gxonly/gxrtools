@@ -50,15 +50,15 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     results = ping_concurrent_async(ip_list, args.timeout, args.concurrency,&mut progress).await?;
     let mut success_count = 0;
 
-    if args.echo {
-        // println!("\n📋 扫描结果：");
-        progress.println("📋 扫描结果：".to_string());
-        for r in &results {
-            if r.status == "成功" {
-                // println!("{} => {}", r.ip, r.status);
+
+    progress.println("📋 扫描结果：".to_string());
+    for r in &results {
+        if r.status == "成功" {
+            // println!("{} => {}", r.ip, r.status);
+            if args.echo{
                 progress.println(format!("{} => {}", r.ip, r.status));
-                success_count += 1;
             }
+            success_count += 1;
         }
     }
 
