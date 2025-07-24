@@ -1,0 +1,9 @@
+id: elasticsearch_unauth
+name: Elasticsearch 未授权访问
+type: http
+port: 9200
+match:
+  path: /
+  method: GET
+  status: 200
+  contains: '"cluster_name"'
