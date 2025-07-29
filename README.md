@@ -187,20 +187,24 @@ gxtools.exe pentest portscan -t 192.168.1.2,192.168.100.1/24 -p 135,137-139-445
 gxtools.exe pentest portscan -t 192.168.1.2 --full --output
 ~~~
 
-### 漏洞探测 待完善，需优化漏洞链接库
+### 漏洞探测 待完善漏洞库
 
 
 ~~~bash
 # 参数
 poc模块测试
 
-Usage: gxtools.exe pentest poctest [OPTIONS] --ip <IP>
+Usage: gxtools.exe pentest poctest [OPTIONS] --target <TARGET>
 
 Options:
-  -i, --ip <IP>      目标 IP 地址
-  -p, --port <PORT>  端口号（可选）
-      --poc <POC>    指定漏洞名称（即.so 文件名，不含后缀）
-  -h, --help         Print help
+  -t, --target <TARGET>  目标IP地址或域名
+      --plugin <PLUGIN>  插件路径（支持文件夹或单个YAML文件） [default: ./plugins]
+  -v, --verbose          输出详细信息
+  -h, --help             Print help
+
+gxtools.exe pentest poctest -t 192.168.4.51
+🔍 开始检测目标：192.168.4.51
+✅ 命中插件：永恒之蓝（MS17-010） [ms17_010] - 存在 MS17-010 漏洞
 ~~~
 
 ### url路径探测
