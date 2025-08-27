@@ -27,6 +27,10 @@ pub struct PingArgs {
     /// 输出到excel
     #[arg(long, default_value = "false")]
     pub output: bool,
+
+    /// 每个IP最多ping的次数
+    #[arg(short, long, default_value = "3")]
+    pub count: u32,
 }
 
 #[derive(Debug)]
@@ -47,15 +51,13 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     let ip_list = parse_targets(&args.target)?;
     println!("🔍 共测试 {} 个 IP", ip_list.len());
     let mut progress = ScanProgress::new(ip_list.len() as u64);
-    results = ping_concurrent_async(ip_list, args.timeout, args.concurrency,&mut progress).await?;
+    results = ping_concurrent_async(ip_list, args.timeout, args.count, args.concurrency, &mut progress).await?;
     let mut success_count = 0;
-
 
     progress.println("📋 扫描结果：".to_string());
     for r in &results {
         if r.status == "成功" {
-            // println!("{} => {}", r.ip, r.status);
-            if args.echo{
+            if args.echo {
                 progress.println(format!("{} => {}", r.ip, r.status));
             }
             success_count += 1;
@@ -78,32 +80,38 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-// 整理IP地址为列表
-
+// ping 单个 IP，最多尝试 count 次，只要一次成功即成功
 async fn ping_ip_async(
     ip: &str,
     timeout_secs: u64,
+    count: u32,
 ) -> Result<PingResult, Box<dyn Error + Send + Sync>> {
     let timeout_str = format!("{}", timeout_secs * 1000);
     let ip_str = ip.to_string();
+    let mut success = false;
 
-    let output = if cfg!(target_os = "windows") {
-        Command::new("ping")
-            .args(["-n", "1", "-w", &timeout_str, &ip_str])
-            .output()
-            .await
-    } else {
-        Command::new("ping")
-            .args(["-c", "1", "-W", &timeout_secs.to_string(), &ip_str])
-            .output()
-            .await
-    };
+    for _ in 0..count {
+        let output = if cfg!(target_os = "windows") {
+            Command::new("ping")
+                .args(["-n", "1", "-w", &timeout_str, &ip_str])
+                .output()
+                .await
+        } else {
+            Command::new("ping")
+                .args(["-c", "1", "-W", &timeout_secs.to_string(), &ip_str])
+                .output()
+                .await
+        };
 
-    let status = match output {
-        Ok(out) if out.status.success() => "成功",
-        Ok(_) => "失败",
-        Err(_) => "错误",
-    };
+        if let Ok(out) = output {
+            if out.status.success() {
+                success = true;
+                break; // 一次成功就终止
+            }
+        }
+    }
+
+    let status = if success { "成功" } else { "失败" };
 
     Ok(PingResult {
         ip: ip.to_string(),
@@ -114,6 +122,7 @@ async fn ping_ip_async(
 pub async fn ping_concurrent_async(
     ips: Vec<String>,
     timeout: u64,
+    count: u32,
     concurrency: usize,
     progress: &mut ScanProgress,
 ) -> Result<Vec<PingResult>, Box<dyn Error + Send + Sync>> {
@@ -128,7 +137,7 @@ pub async fn ping_concurrent_async(
         let result_clone = Arc::clone(&result_arc);
 
         let handle = tokio::spawn(async move {
-            let r = ping_ip_async(&ip_clone, timeout).await;
+            let r = ping_ip_async(&ip_clone, timeout, count).await;
             if let Ok(res) = r {
                 let mut vec = result_clone.lock().await;
                 vec.push(res);
