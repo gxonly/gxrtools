@@ -63,7 +63,7 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
             success_count += 1;
         }
     }
-
+    progress.finish();
     // 输出到ping的excel中
     if args.output {
         save_to_excel(
@@ -75,7 +75,6 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
         )?;
     }
     let elapsed = start.elapsed();
-    progress.finish();
     println!("⏱️ 总耗时：{elapsed:.2?}，共识别存活主机{success_count}个。");
     Ok(())
 }
