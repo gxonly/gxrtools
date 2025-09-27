@@ -3,6 +3,12 @@ name = "gxtools"
 version = "0.1.0"
 edition = "2024"
 
+# 构建脚本
+build = "build.rs"
+
+[build-dependencies]
+winres = "0.1"
+
 [dependencies]
 axum = "0.6"
 hyper = "0.14.32"
@@ -32,3 +38,6 @@ regex = "1"
 chromiumoxide = "0.6.0"
 uuid = { version = "1.16.0", features = ["v4"] }
 indicatif = "0.17"
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
