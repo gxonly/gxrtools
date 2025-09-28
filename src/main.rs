@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use gxtools::commands::net::trace;
+// use gxtools::commands::net::trace;
 use gxtools::commands::{check, net, pentest};
 use gxtools::commands::pentest::screenshot;
 use crate::PentestCommands::Screenshot;
@@ -35,7 +35,7 @@ enum Commands {
 #[derive(Subcommand, Debug)]
 enum PentestCommands {
     /// 端口扫描工具
-    Portscan(pentest::portscan::PortScan),
+    Scan(pentest::portscan::PortScan),
     /// poc模块测试
     Poctest(pentest::poctest::PocTest),
     /// URL 路径探测
@@ -48,8 +48,8 @@ enum PentestCommands {
 enum NetCommands {
     /// Ping扫描工具
     Ping(net::ping::PingArgs),
-    /// 路由追踪工具
-    Trace(net::trace::TraceArgs),
+    // /// 路由追踪工具
+    // Trace(net::trace::TraceArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -84,9 +84,9 @@ async fn main() {
                 handle_error(net::ping::run(&args).await, "Ping 扫描失败");
 
             }
-            NetCommands::Trace(args) => {
-                handle_error(trace::run(&args), "Trace 失败");
-            }
+            // NetCommands::Trace(args) => {
+            //     handle_error(trace::run(&args), "Trace 失败");
+            // }
         },
 
         Commands::Check { subcommand } => match subcommand {
@@ -109,8 +109,8 @@ async fn main() {
         },
 
         Commands::Pentest { subcommand } => match subcommand {
-            PentestCommands::Portscan(args) => {
-                handle_error(pentest::portscan::run(&args).await, "Portscan执行错误");
+            PentestCommands::Scan(args) => {
+                handle_error(pentest::portscan::run(&args).await, "Scan执行错误");
             }
             PentestCommands::Poctest(args) => {
                 handle_error(pentest::poctest::run(&args).await, "Poctest执行错误");
