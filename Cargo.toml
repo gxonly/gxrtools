@@ -3,9 +3,6 @@ name = "gxtools"
 version = "0.1.0"
 edition = "2024"
 
-# 构建脚本
-build = "build.rs"
-
 [build-dependencies]
 winres = "0.1"
 
@@ -30,7 +27,7 @@ oracle = "0.6"
 libloading = "0.8"
 anyhow = "1.0"
 reqwest = "0.12.15"
-redis = { version = "0.24", features = ["aio", "tokio-comp"] }
+redis = { version = "0.27", features = ["aio", "tokio-comp"] }
 socket2 = "0.5"
 futures = "0.3"
 url = "2.5"
@@ -40,6 +37,3 @@ uuid = { version = "1.16.0", features = ["v4"] }
 indicatif = "0.17"
 tokio-native-tls = "0.3"
 native-tls = "0.2.14"
-
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]

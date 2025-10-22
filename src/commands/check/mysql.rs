@@ -1,12 +1,12 @@
 // src/commands/check/mysql.rs
 use crate::constants::load_commands_from_yaml;
 use crate::utils::{create_excel_template, ensure_output_dir};
-use calamine::{open_workbook, Reader, Xlsx};
+use calamine::{Reader, Xlsx, open_workbook};
 use clap::Parser;
 use mysql_async::prelude::*;
 use mysql_async::{Opts, Pool};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
@@ -84,7 +84,12 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("开始执行，共 {} 个实例", db_list.len());
 
     let queries = if args.commands.is_empty() {
-        load_commands_from_yaml(&args.yaml,"mysql_commands")
+        let cmds = load_commands_from_yaml(&args.yaml, "mysql_commands");
+        if cmds.is_empty() {
+            eprintln!("❌ 无法加载命令列表");
+            return Ok(());
+        }
+        cmds
     } else {
         args.commands.clone()
     };
@@ -160,18 +165,18 @@ async fn connect_and_execute(
                 output.insert(
                     cmd.clone(),
                     json!(QueryResult {
-                    status: "✅ 成功".to_string(),
-                    output: formatted_rows.join("\n"),
-                }),
+                        status: "✅ 成功".to_string(),
+                        output: formatted_rows.join("\n"),
+                    }),
                 );
             }
             Err(e) => {
                 output.insert(
                     cmd.clone(),
                     json!(QueryResult {
-                    status: "❌ 错误".to_string(),
-                    output: e.to_string(),
-                }),
+                        status: "❌ 错误".to_string(),
+                        output: e.to_string(),
+                    }),
                 );
             }
         }

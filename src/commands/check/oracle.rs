@@ -1,15 +1,15 @@
 use crate::constants::load_commands_from_yaml;
 use crate::utils::{create_excel_template, ensure_output_dir};
-use calamine::{open_workbook, Reader, Xlsx};
+use calamine::{Reader, Xlsx, open_workbook};
 use clap::Parser;
-use serde_json::{json, Value};
+use oracle::{Connection, Error as OracleError};
+use serde_json::{Value, json};
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 use tokio::task;
-use oracle::{Connection, Error as OracleError};
 
 use std::env;
 use std::path::PathBuf;
@@ -22,13 +22,19 @@ pub fn try_set_oracle_client_path() -> Result<(), String> {
 
     let instantclient_dir = exe_dir.join("instantclient");
     if !instantclient_dir.exists() {
-        return Err(format!("未找到 Oracle instantclient 路径: {}", instantclient_dir.display()));
+        return Err(format!(
+            "未找到 Oracle instantclient 路径: {}",
+            instantclient_dir.display()
+        ));
     }
 
     let old_path = std::env::var("PATH").unwrap_or_default();
 
     unsafe {
-        env::set_var("PATH", format!("{};{}", instantclient_dir.display(), old_path));
+        env::set_var(
+            "PATH",
+            format!("{};{}", instantclient_dir.display(), old_path),
+        );
     }
 
     Ok(())
@@ -97,7 +103,12 @@ pub async fn run(args: &OracleArgs) -> Result<(), Box<dyn Error + Send + Sync>> 
     println!("开始执行，共 {} 个实例", db_list.len());
 
     let queries = if args.commands.is_empty() {
-        load_commands_from_yaml(&args.yaml, "oracle_commands")
+        let cmds = load_commands_from_yaml(&args.yaml, "oracle_commands");
+        if cmds.is_empty() {
+            eprintln!("❌ 无法加载命令列表");
+            return Ok(());
+        }
+        cmds
     } else {
         args.commands.clone()
     };
@@ -170,14 +181,17 @@ pub async fn connect_and_execute(
                 let row = row_result?;
                 let mut line = Vec::new();
                 for i in 0..column_count {
-                    let val: String = row.get::<usize, Option<String>>(i)?.unwrap_or_else(|| "NULL".to_string());
+                    let val: String = row
+                        .get::<usize, Option<String>>(i)?
+                        .unwrap_or_else(|| "NULL".to_string());
                     line.push(val);
                 }
                 formatted.push(line.join(" | "));
             }
 
             Ok(formatted)
-        }).await??;
+        })
+        .await??;
 
         if echo {
             println!("[{}] {}", host_clone, cmd_for_log);

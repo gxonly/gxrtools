@@ -1,12 +1,10 @@
 use clap::{Parser, Subcommand};
-// use gxtools::commands::net::trace;
 use gxtools::commands::{check, net, pentest};
-use gxtools::commands::pentest::screenshot;
-use crate::PentestCommands::Screenshot;
+use std::process;
 
 #[derive(Parser, Debug)]
-#[command(name = "myapp")]
-#[command(about = "gx工具箱", long_about = None)]
+#[command(name = "gxtools")]
+#[command(version, about = "GX安全工具箱 - 网络测试、渗透测试、等保核查工具集", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -19,12 +17,11 @@ enum Commands {
         #[command(subcommand)]
         subcommand: NetCommands,
     },
-    ///等保核查模块
+    /// 等保核查模块
     Check {
         #[command(subcommand)]
         subcommand: CheckCommands,
     },
-
     /// 渗透测试模块
     Pentest {
         #[command(subcommand)]
@@ -36,91 +33,83 @@ enum Commands {
 enum PentestCommands {
     /// 端口扫描工具
     Scan(pentest::portscan::PortScan),
-    /// poc模块测试
+    /// POC测试模块
     Poctest(pentest::poctest::PocTest),
-    /// URL 路径探测
+    /// URL路径探测
     Urlscan(pentest::urlscan::UrlScan),
-    ///URL截图
-    Screenshot(screenshot::ScreenshotArgs),
+    /// URL截图工具
+    Screenshot(pentest::screenshot::ScreenshotArgs),
+    /// 弱口令扫描工具
+    Weakpass(pentest::weakpass::WeakPassArgs),
 }
 
 #[derive(Subcommand, Debug)]
 enum NetCommands {
-    /// Ping扫描工具
+    /// Ping主机存活扫描
     Ping(net::ping::PingArgs),
-    // /// 路由追踪工具
-    // Trace(net::trace::TraceArgs),
 }
 
 #[derive(Subcommand, Debug)]
 enum CheckCommands {
-    /// 执行 Linux 命令（等保基线采集）
+    /// Linux系统基线采集（通过SSH）
     Linux(check::ssh::SshArgs),
-    /// 执行 MySQL 命令（等保基线采集）
+    /// MySQL数据库基线采集
     Mysql(check::mysql::MysqlArgs),
-    /// 执行 Oracle 命令（等保基线采集）
+    /// Oracle数据库基线采集
     Oracle(check::oracle::OracleArgs),
-    /// 执行 Windows 命令（等保基线采集）
+    /// Windows系统基线采集
     Windows(check::windows::WindowsArgs),
-    /// 执行 Redis 命令（等保基线采集）
+    /// Redis数据库基线采集
     Redis(check::redis::RedisArgs),
 }
-
-fn handle_error<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) {
-    if let Err(e) = result {
-        eprintln!("❌ {}: {}", context, e);
-        std::process::exit(1);
-    }
-}
-
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Net { subcommand } => match subcommand {
-            NetCommands::Ping(args) => {
-                handle_error(net::ping::run(&args).await, "Ping 扫描失败");
+    let result = match cli.command {
+        Commands::Net { subcommand } => handle_net_command(subcommand).await,
+        Commands::Check { subcommand } => handle_check_command(subcommand).await,
+        Commands::Pentest { subcommand } => handle_pentest_command(subcommand).await,
+    };
 
-            }
-            // NetCommands::Trace(args) => {
-            //     handle_error(trace::run(&args), "Trace 失败");
-            // }
-        },
+    if let Err(e) = result {
+        eprintln!("❌ 执行失败: {}", e);
+        process::exit(1);
+    }
+}
 
-        Commands::Check { subcommand } => match subcommand {
-            CheckCommands::Linux(args) => {
-                handle_error(check::ssh::run(&args).await, "SSH执行错误");
-            }
-            CheckCommands::Mysql(args) => {
-                handle_error(check::mysql::run(&args).await, "MySQL执行错误");
-            }
-            CheckCommands::Oracle(args) => {
-                handle_error(check::oracle::try_set_oracle_client_path(), "Oracle 模块初始化失败");
-                handle_error(check::oracle::run(&args).await, "Oracle执行错误");
-            }
-            CheckCommands::Windows(args) => {
-                handle_error(check::windows::run(&args).await, "Windows执行错误");
-            }
-            CheckCommands::Redis(args) => {
-                handle_error(check::redis::run(&args).await, "Redis执行错误");
-            }
-        },
+async fn handle_net_command(
+    cmd: NetCommands,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match cmd {
+        NetCommands::Ping(args) => net::ping::run(&args).await,
+    }
+}
 
-        Commands::Pentest { subcommand } => match subcommand {
-            PentestCommands::Scan(args) => {
-                handle_error(pentest::portscan::run(&args).await, "Scan执行错误");
-            }
-            PentestCommands::Poctest(args) => {
-                handle_error(pentest::poctest::run(&args).await, "Poctest执行错误");
-            }
-            PentestCommands::Urlscan(args) => {
-                handle_error(pentest::urlscan::run(&args).await, "Urlscan错误");
-            }
-            Screenshot(args) => {
-                handle_error(pentest::screenshot::run(&args).await, "Screenshot错误");
-            }
-        },
+async fn handle_check_command(
+    cmd: CheckCommands,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match cmd {
+        CheckCommands::Linux(args) => check::ssh::run(&args).await,
+        CheckCommands::Mysql(args) => check::mysql::run(&args).await,
+        CheckCommands::Oracle(args) => {
+            check::oracle::try_set_oracle_client_path()?;
+            check::oracle::run(&args).await
+        }
+        CheckCommands::Windows(args) => check::windows::run(&args).await,
+        CheckCommands::Redis(args) => check::redis::run(&args).await,
+    }
+}
+
+async fn handle_pentest_command(
+    cmd: PentestCommands,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    match cmd {
+        PentestCommands::Scan(args) => pentest::portscan::run(&args).await,
+        PentestCommands::Poctest(args) => pentest::poctest::run(&args).await,
+        PentestCommands::Urlscan(args) => pentest::urlscan::run(&args).await,
+        PentestCommands::Screenshot(args) => pentest::screenshot::run(&args).await,
+        PentestCommands::Weakpass(args) => pentest::weakpass::run(&args).await,
     }
 }

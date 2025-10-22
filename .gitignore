@@ -9,3 +9,5 @@ Cargo.lock
 test.*
 instantclient
 chromiumoxide
+username.txt
+password.txt

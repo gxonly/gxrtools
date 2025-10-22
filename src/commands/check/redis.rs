@@ -1,10 +1,10 @@
-use clap::Parser;
-use redis::{Client, aio::Connection, RedisResult};
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use crate::utils::ensure_output_dir;
-use std::fs::File;
+use clap::Parser;
+use redis::{Client, RedisResult, aio::MultiplexedConnection};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::error::Error;
+use std::fs::File;
 use std::io::Write;
 
 /// 采集参数
@@ -39,29 +39,34 @@ fn save_result(host: &str, result: serde_json::Value) -> Result<(), Box<dyn Erro
     Ok(())
 }
 
-async fn try_acl_list(conn: &mut Connection) -> RedisResult<Option<Vec<String>>> {
+async fn try_acl_list(conn: &mut MultiplexedConnection) -> RedisResult<Option<Vec<String>>> {
     match redis::cmd("ACL").arg("LIST").query_async(conn).await {
         Ok(v) => Ok(Some(v)),
-        Err(_) => Ok(None),  // 兼容 redis 5 没有 ACL
+        Err(_) => Ok(None), // 兼容 redis 5 没有 ACL
     }
 }
 
-async fn try_acl_users(conn: &mut Connection) -> RedisResult<Option<Vec<String>>> {
+async fn try_acl_users(conn: &mut MultiplexedConnection) -> RedisResult<Option<Vec<String>>> {
     match redis::cmd("ACL").arg("USERS").query_async(conn).await {
         Ok(v) => Ok(Some(v)),
         Err(_) => Ok(None),
     }
 }
 
-async fn try_acl_log(conn: &mut Connection) -> RedisResult<Option<Vec<String>>> {
-    match redis::cmd("ACL").arg("LOG").arg("10").query_async(conn).await {
+async fn try_acl_log(conn: &mut MultiplexedConnection) -> RedisResult<Option<Vec<String>>> {
+    match redis::cmd("ACL")
+        .arg("LOG")
+        .arg("10")
+        .query_async(conn)
+        .await
+    {
         Ok(v) => Ok(Some(v)),
         Err(_) => Ok(None),
     }
 }
 
 async fn try_acl_user_detail(
-    conn: &mut Connection,
+    conn: &mut MultiplexedConnection,
     users: &[String],
 ) -> RedisResult<Option<HashMap<String, HashMap<String, String>>>> {
     let mut map = HashMap::new();
@@ -69,27 +74,28 @@ async fn try_acl_user_detail(
         match redis::cmd("ACL")
             .arg("GETUSER")
             .arg(u)
-            .query_async::<_, redis::Value>(conn)
+            .query_async::<redis::Value>(conn)
             .await
         {
-            Ok(redis::Value::Bulk(items)) => {
+            Ok(redis::Value::Array(items)) => {
                 // redis 6+ ACL GETUSER 返回 [ "flags", [flag1,flag2], "passwords", ["<hashed>"], ... ]
                 let mut detail = HashMap::new();
                 let mut i = 0;
                 while i + 1 < items.len() {
-                    if let redis::Value::Data(k) = &items[i] {
+                    if let redis::Value::BulkString(k) = &items[i] {
                         let key = String::from_utf8_lossy(k).to_string();
                         let value = match &items[i + 1] {
-                            redis::Value::Bulk(vs) => {
-                                vs.iter()
-                                    .filter_map(|v| match v {
-                                        redis::Value::Data(d) => Some(String::from_utf8_lossy(d).to_string()),
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            }
-                            redis::Value::Data(d) => String::from_utf8_lossy(d).to_string(),
+                            redis::Value::Array(vs) => vs
+                                .iter()
+                                .filter_map(|v| match v {
+                                    redis::Value::BulkString(d) => {
+                                        Some(String::from_utf8_lossy(d).to_string())
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>()
+                                .join(","),
+                            redis::Value::BulkString(d) => String::from_utf8_lossy(d).to_string(),
                             _ => "".to_string(),
                         };
                         detail.insert(key, value);
@@ -104,7 +110,7 @@ async fn try_acl_user_detail(
     Ok(Some(map))
 }
 
-pub async fn run(args: &RedisArgs) -> anyhow::Result<()> {
+pub async fn run(args: &RedisArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     let addr = if args.password.is_empty() {
         format!("redis://{}:{}/", args.host, args.port)
     } else {
@@ -112,7 +118,7 @@ pub async fn run(args: &RedisArgs) -> anyhow::Result<()> {
     };
 
     let client = Client::open(addr)?;
-    let mut conn = client.get_async_connection().await?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
 
     // CONFIG
     let config_vec: Vec<String> = redis::cmd("CONFIG")
@@ -133,10 +139,7 @@ pub async fn run(args: &RedisArgs) -> anyhow::Result<()> {
         .collect();
 
     // INFO
-    let info_raw: String = redis::cmd("INFO")
-        .arg("ALL")
-        .query_async(&mut conn)
-        .await?;
+    let info_raw: String = redis::cmd("INFO").arg("ALL").query_async(&mut conn).await?;
 
     let info: HashMap<String, String> = info_raw
         .lines()
