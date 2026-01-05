@@ -245,33 +245,92 @@ pub async fn ping_concurrent_async(
 /// * `Ok(PingResult)` - Ping结果
 /// * `Err` - Ping失败
 async fn ping_ip_async(ip: &str, timeout_secs: u64, count: u32) -> PingResult {
-    let timeout_str = format!("{}", timeout_secs * 1000);
+    // Windows下单次ping超时（毫秒），设置为总超时的1/2避免整体超时过长
+    let win_timeout_ms = (timeout_secs * 500).to_string();
+    // Linux下的超时参数（秒）
+    let linux_timeout_secs = timeout_secs.to_string();
+    // let timeout_str = format!("{}", timeout_secs * 1000);
 
     for attempt in 1..=count {
         let output = if cfg!(target_os = "windows") {
             // Windows平台: ping -n 1 -w timeout IP
             Command::new("ping")
-                .args(["-n", "1", "-w", &timeout_str, ip])
+                .args(["-n", "1", "-w", &win_timeout_ms, "-4", "-l", "32", ip])
                 .output()
                 .await
         } else {
             // Unix/Linux平台: ping -c 1 -W timeout IP
             Command::new("ping")
-                .args(["-c", "1", "-W", &timeout_secs.to_string(), ip])
+                .args(["-c", "1", "-W", &linux_timeout_secs.to_string(), ip])
                 .output()
                 .await
         };
 
+        // println!("\n===== 调试信息 [IP: {}, 尝试次数: {}] =====", ip, attempt);
+        // match &output {
+        //     Ok(out) => {
+        //         // 1. 打印命令退出码（Windows下Ping的退出码可能不准，但可以参考）
+        //         println!("退出码: {:?}", out.status.code());
+        //         // 2. 打印标准输出（stdout）—— Ping的主要输出内容
+        //         println!("标准输出（原始字节）: {:?}", out.stdout);
+        //         // 3. 尝试转成字符串（UTF-8），Windows下可能乱码，先看原始
+        //         let stdout_str = String::from_utf8_lossy(&out.stdout);
+        //         println!("标准输出（UTF-8解析）: {}", stdout_str);
+        //         // 4. Windows下尝试用GBK解码（解决中文乱码）
+        //         if cfg!(target_os = "windows") {
+        //             let (gbk_str, _, _) = encoding_rs::GBK.decode(&out.stdout);
+        //             println!("标准输出（GBK解码）: {}", gbk_str);
+        //         }
+        //         // 5. 打印标准错误（stderr）—— 排查命令执行错误
+        //         let stderr_str = String::from_utf8_lossy(&out.stderr);
+        //         println!("标准错误: {}", stderr_str);
+        //     }
+        //     Err(e) => {
+        //         // 命令执行失败（比如找不到ping命令、权限问题）
+        //         println!("命令执行失败: {}", e);
+        //     }
+        // }
+        // println!("===========================================\n");
+
         match output {
-            Ok(out) if out.status.success() => {
-                // 尝试提取响应时间
-                let response_time = extract_response_time(&out.stdout);
-                return PingResult::success(ip.to_string(), response_time);
-            }
-            Ok(_) => {
-                // Ping失败，继续重试
-                if attempt < count {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            Ok(out) => {
+                // Windows下即使返回非0状态码，也可能包含有效响应（如TTL过期但能通）
+                let is_success = if cfg!(target_os = "windows") {
+                    // 1. GBK解码（中文版）/ UTF-8（英文版）都能兼容
+                    let (gbk_str, _, _) = encoding_rs::GBK.decode(&out.stdout);
+                    let output_str = gbk_str.to_lowercase();
+                    
+                    // 2. 同时匹配中英文成功关键词，覆盖所有Windows版本
+                    let success_keywords = [
+                        // 中文关键词（适配Windows中文版）
+                        "回复", "来自", 
+                        // 英文关键词（适配Windows英文版）
+                        "reply from", "ttl=", "bytes=", 
+                        // 通用关键词（中英文都有）
+                        "time=" 
+                    ];
+                    
+                    // 只要包含任意一个关键词，就判定为成功
+                    success_keywords.iter().any(|kw| output_str.contains(kw))
+                } else {
+                    out.status.success()
+                };
+
+                if is_success {
+                    // 尝试提取响应时间
+                    let response_time = extract_response_time(&out.stdout);
+                    return PingResult::success(ip.to_string(), response_time);
+                } else {
+                    // Ping失败，继续重试
+                    if attempt < count {
+                        // Windows下增加重试间隔，避免请求过于密集
+                        let sleep_time = if cfg!(target_os = "windows") {
+                            tokio::time::Duration::from_millis(200)
+                        } else {
+                            tokio::time::Duration::from_millis(100)
+                        };
+                        tokio::time::sleep(sleep_time).await;
+                    }
                 }
             }
             Err(e) => {
@@ -293,28 +352,41 @@ async fn ping_ip_async(ip: &str, timeout_secs: u64, count: u32) -> PingResult {
 /// * `Some(f64)` - 响应时间（毫秒）
 /// * `None` - 无法提取响应时间
 fn extract_response_time(output: &[u8]) -> Option<f64> {
-    let output_str = String::from_utf8_lossy(output);
+    let output_str = String::from_utf8_lossy(output).to_lowercase();
 
-    // Windows格式: "时间=1ms" 或 "time=1ms"
-    // Linux格式: "time=1.23 ms"
-    if let Some(time_pos) = output_str
-        .find("time=")
-        .or_else(|| output_str.find("时间="))
-    {
-        let time_part = &output_str[time_pos..];
+    // 匹配所有可能的时间关键字：time=, 时间=, latency=
+    let time_markers = ["time=", "时间=", "latency="];
+    let mut time_pos = None;
 
-        // 查找数字部分
-        if let Some(num_start) = time_part.find(|c: char| c.is_ascii_digit()) {
-            let num_part = &time_part[num_start..];
+    for marker in time_markers {
+        if let Some(pos) = output_str.find(marker) {
+            time_pos = Some(pos + marker.len());
+            break;
+        }
+    }
 
-            // 提取数字（包括小数点）
+    if let Some(pos) = time_pos {
+        let time_part = &output_str[pos..];
+
+        // 查找数字部分（包括负数，比如某些Windows版本会出现time=-1ms）
+        let num_start = time_part.find(|c: char| {
+            c.is_ascii_digit() || c == '.' || c == '-'
+        });
+
+        if let Some(num_start_idx) = num_start {
+            let num_part = &time_part[num_start_idx..];
+
+            // 提取数字（包括小数点和负号）
             let num_str: String = num_part
                 .chars()
-                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
                 .collect();
 
             if let Ok(time) = num_str.parse::<f64>() {
-                return Some(time);
+                // 过滤掉无效的响应时间（负数）
+                if time >= 0.0 {
+                    return Some(time);
+                }
             }
         }
     }
