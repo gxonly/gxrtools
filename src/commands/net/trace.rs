@@ -5,21 +5,33 @@
 //! 注意：接收 ICMP 需要 raw socket，Linux/macOS 通常需 root，Windows 需管理员。
 
 use clap::Parser;
+#[cfg(not(windows))]
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+#[cfg(not(windows))]
+use std::net::{SocketAddr, UdpSocket};
+#[cfg(not(windows))]
 use std::mem::MaybeUninit;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(windows))]
+use std::time::Instant;
 use std::{error::Error, thread};
 
+#[cfg(not(windows))]
 const RECV_BUF_LEN: usize = 1500;
+#[cfg(not(windows))]
 const BASE_PORT: u16 = 33434;
 /// IP 首部最小长度（字节）
+#[cfg(not(windows))]
 const IP_HDR_MIN_LEN: usize = 20;
 /// ICMP 首部最小长度（类型 + 代码 + 校验和）
+#[cfg(not(windows))]
 const ICMP_HDR_LEN: usize = 4;
 /// ICMP Destination Unreachable
+#[cfg(not(windows))]
 const ICMP_TYPE_DEST_UNREACHABLE: u8 = 3;
 /// ICMP code: Port unreachable（说明已到达目标主机）
+#[cfg(not(windows))]
 const ICMP_CODE_PORT_UNREACHABLE: u8 = 3;
 
 #[derive(Parser, Debug)]
@@ -44,6 +56,7 @@ pub struct TraceArgs {
 
 /// 解析收到的 IP 包，返回 IP 首部长度（字节）和 ICMP 载荷起始偏移
 #[inline]
+#[cfg(not(windows))]
 fn ip_header_len(packet: &[u8]) -> Option<usize> {
     if packet.len() < IP_HDR_MIN_LEN {
         return None;
@@ -57,6 +70,7 @@ fn ip_header_len(packet: &[u8]) -> Option<usize> {
 
 /// 从 ICMP 载荷中读取 type/code（ICMP 头前 2 字节）
 #[inline]
+#[cfg(not(windows))]
 fn icmp_type_code(packet: &[u8], icmp_start: usize) -> Option<(u8, u8)> {
     if packet.len() < icmp_start + ICMP_HDR_LEN {
         return None;
@@ -66,7 +80,6 @@ fn icmp_type_code(packet: &[u8], icmp_start: usize) -> Option<(u8, u8)> {
 
 pub fn run(args: &TraceArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     let dest_ip = resolve_target(&args.target)?;
-    let timeout = Duration::from_secs(args.timeout);
 
     println!(
         "🚀 路由追踪到 {} ({})，最多 {} 跳\n",
@@ -79,6 +92,10 @@ pub fn run(args: &TraceArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     {
         return windows_icmp_trace(args, dest_ip);
     }
+
+    #[cfg(not(windows))]
+    {
+    let timeout = Duration::from_secs(args.timeout);
 
     // 接收 ICMP 的 raw socket（仅 IPv4）
     let icmp_sock = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
@@ -174,6 +191,7 @@ pub fn run(args: &TraceArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     println!("\n❌ 未在 {} 跳内到达目标", args.max_hops);
     Ok(())
+    }
 }
 
 /// 将目标（域名或 IP 字符串）解析为 IPv4 地址
@@ -200,9 +218,9 @@ fn resolve_target(target: &str) -> Result<IpAddr, Box<dyn Error + Send + Sync>> 
 
 #[cfg(windows)]
 fn windows_icmp_trace(args: &TraceArgs, dest_ip: IpAddr) -> Result<(), Box<dyn Error + Send + Sync>> {
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use std::ptr::null_mut;
     use windows_sys::Win32::NetworkManagement::IpHelper::{
-        IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, IP_OPTION_INFORMATION,
+        IcmpCloseHandle, IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, IP_OPTION_INFORMATION,
     };
     use windows_sys::Win32::Networking::WinSock::{IN_ADDR, inet_addr};
     use std::mem::{size_of, zeroed};
@@ -212,16 +230,16 @@ fn windows_icmp_trace(args: &TraceArgs, dest_ip: IpAddr) -> Result<(), Box<dyn E
     };
 
     unsafe {
-        let h: HANDLE = IcmpCreateFile();
-        if h == 0 {
+        let h = IcmpCreateFile();
+        if h == null_mut() {
             return Err("IcmpCreateFile 失败（权限或系统组件缺失）".into());
         }
 
         let ip_str = v4.to_string();
         let ip_c = std::ffi::CString::new(ip_str).unwrap();
-        let ip_u32 = inet_addr(ip_c.as_ptr());
+        let ip_u32 = inet_addr(ip_c.as_ptr().cast::<u8>());
         if ip_u32 == u32::MAX {
-            let _ = CloseHandle(h);
+            let _ = IcmpCloseHandle(h);
             return Err("inet_addr 解析失败".into());
         }
 
@@ -284,7 +302,7 @@ fn windows_icmp_trace(args: &TraceArgs, dest_ip: IpAddr) -> Result<(), Box<dyn E
                         avg.map(|a| format!("  {} ms", a)).unwrap_or_default()
                     );
                     println!("\n✅ 追踪完成");
-                    let _ = CloseHandle(h);
+                    let _ = IcmpCloseHandle(h);
                     return Ok(());
                 } else {
                     println!(
@@ -301,7 +319,7 @@ fn windows_icmp_trace(args: &TraceArgs, dest_ip: IpAddr) -> Result<(), Box<dyn E
             thread::sleep(Duration::from_millis(50));
         }
 
-        let _ = CloseHandle(h);
+        let _ = IcmpCloseHandle(h);
         println!("\n❌ 未在 {} 跳内到达目标", args.max_hops);
         Ok(())
     }

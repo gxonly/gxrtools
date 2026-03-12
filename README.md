@@ -1,16 +1,55 @@
-# gxrtools
+## gxrtools（GX 安全工具箱）
 
-> 提示：本工具会在本地生成测评证据（`output/<task-id>/...`）。证据目录默认已加入 `.gitignore`，请勿将客户数据/真实账号口令字典提交到仓库。
+> 提示：本工具会在本地生成测评证据（`output/<task-id>/...`）。证据目录默认已加入 `.gitignore`，请勿将客户数据、真实账号口令字典提交到仓库。
 
-## 网络测试模块
-### Ping
+### 快速开始
 
-默认结果存储至output/ping/日期.xlsx中
+```bash
+# 查看总帮助
+gxtools.exe -h
 
-~~~bash
-# 参数
-执行 ping 操作
+# 查看模块帮助
+gxtools.exe net -h
+gxtools.exe check -h
+gxtools.exe pentest -h
+gxtools.exe compliance -h
+```
 
+### 输出目录约定
+
+所有模块支持通用输出参数：
+
+- `--out <DIR>`：输出根目录（默认 `output`）
+- `--task-id <ID>`：任务 ID（不传则自动生成时间戳）
+- `--sanitize <true|false>`：是否脱敏（默认 `true`）
+
+输出结构示例：
+
+```text
+output/<task-id>/
+  poctest/
+    summary.json
+    <target>_<plugin-id>.json
+  weakpass/
+    weakpass_<timestamp>.xlsx
+  portscan/
+    ...
+  windows/
+  ssh/
+  mysql/
+  oracle/
+  redis/
+```
+
+> 说明：当 `--sanitize true` 时，`summary.json`/单条证据 JSON 会对 `password/token/secret/api_key` 等字段自动脱敏为 `***`；需要复核时可用 `--sanitize false` 输出明文证据（请妥善保存）。
+
+---
+
+## 网络测试模块（`net`）
+
+### Ping（主机存活）
+
+```bash
 Usage: gxtools.exe net ping [OPTIONS] --target <TARGET>
 
 Options:
@@ -18,265 +57,231 @@ Options:
   -T, --timeout <TIMEOUT>          超时时间（秒） [default: 2]
   -c, --concurrency <CONCURRENCY>  最大并发数 [default: 100]
   -e, --echo                       是否打印结果到终端
-  -h, --help                       Print help
 
-# 例子
+Example:
 gxtools.exe net ping -t 192.168.100.1,192.168.100.3-5,192.168.200.1/24
-~~~
+```
 
 ### Trace（路由追踪）
 
-纯 Rust 实现，不调用系统 `traceroute`。通过 UDP 探测包递增 TTL，接收 ICMP Time Exceeded / Dest Unreachable 并解析 IP 首部后打印每一跳。**接收 ICMP 需 raw socket，Linux/macOS 通常需 root，Windows 需管理员。**
+纯 Rust 实现，不调用系统 `traceroute/tracert`。
 
-~~~bash
-# 参数
-Usage: gxtools net trace [OPTIONS] --target <TARGET>
+- Linux/macOS：通过 raw socket 接收 ICMP（通常需要 root）
+- Windows：使用 ICMP API 实现逐跳探测（通常需要管理员权限）
+
+```bash
+Usage: gxtools.exe net trace [OPTIONS] --target <TARGET>
 
 Options:
-  -t, --target <TARGET>  目标主机（IP 或域名）
-  -m, --max-hops <N>    最大跳数 [default: 30]
-  -T, --timeout <SECS>  每跳超时（秒） [default: 3]
-  -q, --nqueries <N>    每跳探测次数（用于 RTT） [default: 3]
-  -h, --help            Print help
+  -t, --target <TARGET>  目标主机（IP 或域名，仅 IPv4）
+  -m, --max-hops <N>     最大跳数 [default: 30]
+  -T, --timeout <SECS>   每跳超时（秒） [default: 3]
+  -q, --nqueries <N>     每跳探测次数（用于 RTT） [default: 3]
 
-# 例子
-gxtools net trace -t 8.8.8.8
-gxtools net trace -t baidu.com -m 20
-~~~
+Example:
+gxtools.exe net trace -t 8.8.8.8
+gxtools.exe net trace -t baidu.com -m 20
+```
 
+---
 
-## 等保核查模块
+## 等保核查模块（`check`）
 
-### Linux（ssh方式）
+### Linux（SSH 方式）
 
-默认存储于output/ssh/ip.json
+默认输出到 `output/<task-id>/ssh/`。
 
-~~~bash
-# 参数
+```bash
 Usage: gxtools.exe check linux [OPTIONS]
 
 Options:
-  -H, --host <HOST>                        远程主机的IP地址 (与 -f 互斥)
-  -f, --file <FILE>                        从Excel文件读取主机列表(格式: 主机,端口,用户名,密码/密钥路径) (与 -H 互斥)
-  -P, --port <PORT>                        SSH端口号 (当使用 -H 时有效) [default: 22]
-  -u, --username <USERNAME>                用户名 (当使用 -H 时有效) [default: root]
-  -p, --password-or-key <PASSWORD_OR_KEY>  密码或私钥路径 (当使用 -H 时必需)
-  -c, --commands <COMMANDS>...             要执行的命令
+  -H, --host <HOST>                        远程主机IP（与 -f 互斥）
+  -f, --file <FILE>                        Excel 主机列表（与 -H 互斥）
+  -P, --port <PORT>                        SSH 端口 [default: 22]
+  -u, --username <USERNAME>                用户名 [default: root]
+  -p, --password-or-key <PASSWORD_OR_KEY>  密码或私钥路径
+  -c, --commands <COMMANDS>...             自定义命令（可多个 -c）
   -t, --threads <THREADS>                  并发线程数 [default: 4]
-  -e, --echo                               输出到控制台，使用前提需指定自定义命令
+  -e, --echo                               输出到控制台（通常配合 -c）
       --out <OUT>                          输出根目录 [default: output]
-      --task-id <TASK_ID>                  任务ID（同一次测评建议统一）
-      --sanitize <SANITIZE>                输出脱敏 [default: true]
-  -h, --help                               Print help
-  
-# 例子
-gxtools.exe check linux -H 192.168.100.1 -P 22 -p mima -u root -e -c "pwd"
-gxtools.exe check linux -f linux.xlsx		# 默认命令
+      --task-id <TASK_ID>                  任务ID
+      --sanitize <true|false>              输出脱敏 [default: true]
+
+Examples:
+gxtools.exe check linux -H 192.168.100.1 -P 22 -u root -p mima -e -c "pwd"
+gxtools.exe check linux -f linux.xlsx
 gxtools.exe check linux -f linux.xlsx -c "ls" -e
-~~~
+```
 
-### windows
+### Windows（本地脚本下发/采集）
 
-默认存储于output/windows/ip.json，依赖windows中powershell版本，需根据需求手动调整powershell脚本，脚本编码UTF-16LE
+默认输出到 `output/<task-id>/windows/`。PowerShell 脚本编码建议 `UTF-16LE`（按需调整脚本内容）。
 
-~~~bash
-# 参数
+```bash
 Usage: gxtools.exe check windows [OPTIONS]
 
 Options:
-  -f, --file <FILE>  指定ps1脚本路径
-  -p, --port <PORT>  修改端口，默认3000 [default: 3000]
-  -i, --ip <IP>      绑定本机IP，默认自动识别，多网卡可能异常
-      --out <OUT>    输出根目录 [default: output]
-      --task-id <TASK_ID>  任务ID（同一次测评建议统一）
-      --sanitize <SANITIZE> 输出脱敏 [default: true]
-  -h, --help         Print help
+  -f, --file <FILE>            指定 ps1 脚本路径
+  -p, --port <PORT>            本机 HTTP 服务端口 [default: 3000]
+  -i, --ip <IP>                绑定本机 IP（多网卡时可手动指定）
+      --out <OUT>              输出根目录 [default: output]
+      --task-id <TASK_ID>      任务ID
+      --sanitize <true|false>  输出脱敏 [default: true]
 
-# 例子
-gxtools.exe check windows		# 默认运行，自动识别网卡，使用本机3000端口
-gxtools.exe check windows -i 192.168.1.1 -p 12321		# 绑定网卡，并使用12321端口
-~~~
+Examples:
+gxtools.exe check windows
+gxtools.exe check windows -i 192.168.1.1 -p 12321
 
-~~~bash
-登录windows之后使用powershell执行以下命令，修改ip和端口
+# 登录 Windows 目标后执行（替换为你的测评机 IP/端口）
+iex (Invoke-RestMethod -Uri "http://<your-ip>:3000/script")
+```
 
-iex (Invoke-RestMethod -Uri "http://192.168.101.97:3000/script")
-~~~
+### MySQL / Oracle / Redis（基线采集）
 
+这三类模块支持 `--yaml cmd.yaml`（或用 `-c` 自定义命令/SQL）。默认输出到 `output/<task-id>/<module>/`。
 
+```bash
+# MySQL
+gxtools.exe check mysql -H 192.168.100.1 -P 3306 -u root -p mima -e -c "SELECT VERSION();"
+gxtools.exe check mysql -f mysql.xlsx
 
-### MySQL
+# Oracle（需准备 instantclient）
+gxtools.exe check oracle -H 192.168.100.1 -P 1521 -u system -p mima -e -c "SELECT * FROM v$version"
+gxtools.exe check oracle -f oracle.xlsx
 
-默认存储于output/mysql/ip.json
+# Redis
+gxtools.exe check redis -H 192.168.1.1 -P 6379 -p redis_pass
+```
 
-~~~bash
-# 参数
-Usage: gxtools.exe check mysql [OPTIONS] --host <HOST> --password <PASSWORD>
+---
 
-Options:
-  -H, --host <HOST>             远程主机的IP地址 (与 -f 互斥)
-  -f, --file <FILE>             从Excel文件读取主机列表 (格式: 主机,端口,用户名,密码) (与 -H 互斥)
-  -P, --port <PORT>             MySQL端口号 (当使用 -H 时有效) [default: 3306]
-  -u, --username <USERNAME>     用户名 (当使用 -H 时有效) [default: root]
-  -p, --password <PASSWORD>     密码 (当使用 -H 时必需)
-      --yaml <YAML>             自定义yaml文件 [default: cmd.yaml]
-  -c, --commands <COMMANDS>...  要执行的SQL命令，多命令时，每个命令使用一个-c
-  -t, --threads <THREADS>       并发线程数 [default: 4]
-  -e, --echo                    输出到控制台，使用前提需指定自定义命令
-      --out <OUT>               输出根目录 [default: output]
-      --task-id <TASK_ID>       任务ID（同一次测评建议统一）
-      --sanitize <SANITIZE>     输出脱敏 [default: true]
-  -h, --help                    Print help
-  
-# 例子
-gxtools.exe check mysql -H 192.168.100.1 -P 3306 -p mima  -e -c "select version()"
-gxtools.exe check mysql -f mysql.xlsx		# 默认命令
-gxtools.exe check mysql -f mysql.xlsx -c "ls" -e
-~~~
+## 合规分析与报告（`compliance`）
 
+读取采集结果并生成“差距分析”报告（当前内置 Redis 自动判定，后续可扩展到 Linux/Windows/MySQL/Oracle）。
 
-
-### Oracle
-
-默认存储于output/oracle/ip.json，使用oracle依赖oci等工具，需再oracle官网中进行下载，并放置于instantclient目录下
->下载路径https://download.oracle.com/otn/nt/instantclient/122010/instantclient-basic-windows.x64-12.2.0.1.0.zip
-
-~~~bash
-# 参数
-Usage: gxtools.exe check oracle [OPTIONS] --host <HOST> --password <PASSWORD>
-
-Options:
-  -H, --host <HOST>                  远程主机的IP地址 (与 -f 互斥)
-  -f, --file <FILE>                  从Excel文件读取主机列表 (格式: 主机,端口,用户名,密码) (与 -H 互斥)
-  -P, --port <PORT>                  Oracle端口号 (当使用 -H 时有效) [default: 1521]
-  -u, --username <USERNAME>          用户名 (当使用 -H 时有效) [default: system]
-  -p, --password <PASSWORD>          密码 (当使用 -H 时必需)
-  -s, --service-name <SERVICE_NAME>  自定义服务名 [default: ORCL]
-      --yaml <YAML>                  自定义yaml文件 [default: cmd.yaml]
-  -c, --commands <COMMANDS>...       要执行的SQL命令，多命令时，每个命令使用一个-c
-  -t, --threads <THREADS>            并发线程数 [default: 4]
-  -e, --echo                         输出到控制台，使用前提需指定自定义命令
-      --out <OUT>                    输出根目录 [default: output]
-      --task-id <TASK_ID>            任务ID（同一次测评建议统一）
-      --sanitize <SANITIZE>          输出脱敏 [default: true]
-  -h, --help                         Print help
-
-  
-# 例子
-gxtools.exe check oracle -H 192.168.100.1 -P 1521 -p mima  -e -c 'SELECT * FROM v$version'
-gxtools.exe check oracle -f oracle.xlsx		# 默认命令
-~~~
-
-### Redis
-
-默认存储于output/redis/ip.json
-
-~~~bash
-# 参数
-执行 Redis 命令（等保基线采集）
-
-Usage: gxtools.exe check redis [OPTIONS] --host <HOST>
-
-Options:
-  -H, --host <HOST>
-  -P, --port <PORT>          [default: 6379]
-  -p, --password <PASSWORD>  [default: ]
-      --out <OUT>            输出根目录 [default: output]
-      --task-id <TASK_ID>    任务ID（同一次测评建议统一）
-      --sanitize <SANITIZE>  输出脱敏 [default: true]
-  -h, --help                 Print help
-
-## 合规分析与报告
-
-读取采集结果并生成“差距分析”报告（先内置 Redis 自动判定，后续可扩展到 Linux/Windows/MySQL/Oracle）。
-
-~~~bash
-# 例：统一 task-id 归档采集 + 分析
+```bash
+# 统一 task-id 归档采集 + 分析
 gxtools.exe check redis -H 192.168.1.10 -P 6379 -p redis_pass --task-id 20260311_a
 gxtools.exe compliance analyze --task-id 20260311_a
 
 # 不指定 task-id 时，会自动选择 output/ 下最新的任务目录
 gxtools.exe compliance analyze
-~~~
+```
 
-  
-# 例子
-gxtools.exe check redis -H 192.168.1.1 -P 6379 -p redis_pass 
-~~~
+---
 
-## 渗透测试模块
-### 端口扫描
+## 渗透测试模块（`pentest`）
 
-默认存储于output/portscan/时间戳.json
+### Portscan（端口扫描）
 
-~~~bash
-# 参数
+默认输出到 `output/<task-id>/portscan/`。
+
+```bash
 Usage: gxtools.exe pentest portscan [OPTIONS] --targets <TARGETS>
 
 Options:
-  -t, --targets <TARGETS>          IP 或 IP 段（支持CIDR、范围、多个IP用逗号隔开）
-  -p, --ports <PORTS>              自定义端口（用逗号隔开，例如：80,443,22）
-      --full                       是否扫描全部端口（1-65535）
+  -t, --targets <TARGETS>          IP 或 IP 段（支持 CIDR、范围、多个 IP 用逗号隔开）
+  -p, --ports <PORTS>              自定义端口（逗号分隔，如 80,443,22 或 1-1024）
+      --full                       扫描全部端口（1-65535）
   -c, --concurrency <CONCURRENCY>  最大并发数 [default: 1000]
-      --output                     输出到excel
-  -h, --help                       Print help
-  
-# 例子
+      --output                     输出到 Excel
+
+Examples:
 gxtools.exe pentest portscan -t 192.168.100.1
-gxtools.exe pentest portscan -t 192.168.1.2,192.168.100.1/24 -p 135,137-139-445
-# 全端口，并输出到excel中
+gxtools.exe pentest portscan -t 192.168.1.2,192.168.100.1/24 -p 135,137-139,445
 gxtools.exe pentest portscan -t 192.168.1.2 --full --output
-~~~
+```
 
-### 漏洞探测 待完善漏洞库
+### Weakpass（弱口令扫描）
 
+扫描常见服务的弱口令/空口令（SSH/RDP/Tomcat/Nacos 等）。命中时会输出用户名与密码；如需在结果文件中脱敏，请用 `--sanitize true`（默认）。
 
-~~~bash
-# 参数
-poc模块测试
+```bash
+Usage: gxtools.exe pentest weakpass [OPTIONS] --targets <TARGETS>
 
-Usage: gxtools.exe pentest poctest [OPTIONS] --target <TARGET>
+Examples:
+gxtools.exe pentest weakpass -t 192.168.1.0/24 -s all -c 20 -T 5 -o
+gxtools.exe pentest weakpass -t 192.168.1.10 -s ssh -u usernames.txt -p passwords.txt --sanitize false
+```
 
-Options:
-  -t, --target <TARGET>  目标IP地址或域名
-      --plugin <PLUGIN>  插件路径（支持文件夹或单个YAML文件） [default: ./plugins]
-  -v, --verbose          输出详细信息
-  -h, --help             Print help
+### PocTest（漏洞探测 / POC 验证）
 
-gxtools.exe pentest poctest -t 192.168.4.51
-🔍 开始检测目标：192.168.4.51
-✅ 命中插件：永恒之蓝（MS17-010） [ms17_010] - 存在 MS17-010 漏洞
-~~~
+支持加载 `./plugins` 下的 YAML 插件批量验证目标。命中项会落盘到 `output/<task-id>/poctest/`，并生成汇总 `summary.json`；可选导出 Excel（仅命中项）。
 
-### url路径探测
+```bash
+Usage: gxtools.exe pentest poctest [OPTIONS]
 
-~~~bash
-# 参数
-URL 路径探测
+常用参数：
+  -t, --target <TARGET>            单个目标（与 --targets/--file 互斥）
+      --targets <TARGETS>          多目标（逗号分隔；CIDR/范围仅 IPv4）
+  -f, --file <FILE>                文件导入目标（每行一个）
+      --plugin <PLUGIN>            插件路径（目录或单个 YAML）[default: ./plugins]
+  -c, --concurrency <CONCURRENCY>  最大并发数 [default: 50]
+      --excel                      导出命中项到 Excel
+  -v, --verbose                    输出详细信息
+      --sanitize <true|false>      是否脱敏 [default: true]
 
+Examples:
+gxtools.exe pentest poctest --targets 192.168.1.1,192.168.1.2 --excel
+gxtools.exe pentest poctest -f targets.txt --plugin .\\plugins\\es_unauth_v2.yaml --sanitize false
+```
+
+#### 插件格式（推荐：V2）
+
+建议按 `plugins/es_unauth_v2.yaml` 的结构新增插件。HTTP 类插件支持多 step、`any` 逻辑、请求头/Body、超时与端口覆盖。
+
+对于“弱口令/默认口令（Basic Auth）”类插件：
+
+- 在每个 step 增加 `credential: "user:pass"`（允许空密码如 `"elastic:"`）
+- 命中后会把 `username/password` 写入输出（默认 `--sanitize true` 会脱敏；复核用 `--sanitize false` 输出明文）
+
+V2 通用模板（复制后按需改）：
+
+```yaml
+id: your_vuln_id
+name: 你的漏洞名称
+transport: http
+port: 80
+severity: medium
+tags: ["web"]
+
+http:
+  scheme: http
+  any: false
+  requests:
+    - method: GET
+      path: /path
+      timeout: 5
+      headers:
+        User-Agent: "gxtools-poctest"
+      matchers:
+        - type: status
+          status: 200
+        - type: body_contains
+          contains: "keyword"
+```
+
+### Urlscan（URL 路径探测）
+
+```bash
 Usage: gxtools.exe pentest urlscan [OPTIONS] --url <URL>
 
 Options:
   -u, --url <URL>    目标 URL，如 http://example.com
   -d, --dict <DICT>  字典文件路径 [default: urlscan.txt]
-  -h, --help         Print help
-~~~
+```
 
-### url页面截图
+### Screenshot（URL 页面截图）
 
-需要有chrome无头浏览器支持
->下载地址如下 https://github.com/ungoogled-software/ungoogled-chromium-windows
+需要无头浏览器支持（可使用 [ungoogled-chromium-windows](https://github.com/ungoogled-software/ungoogled-chromium-windows)）。
 
-~~~bash
-# 参数
-URL截图
-
+```bash
 Usage: gxtools.exe pentest screenshot [OPTIONS] --url-file <URL_FILE>
 
 Options:
-  -u, --url-file <URL_FILE>        包含URL列表的文件路径
+  -u, --url-file <URL_FILE>        包含 URL 列表的文件路径
   -o, --output <OUTPUT>            输出目录 [default: screenshots]
       --concurrency <CONCURRENCY>  并发任务数 [default: 4]
-      --path <PATH>                指定无头浏览器位置 [default: ./chromiumoxide/chrome.exe]
-~~~
+      --path <PATH>                无头浏览器位置 [default: ./chromiumoxide/chrome.exe]
+```
 

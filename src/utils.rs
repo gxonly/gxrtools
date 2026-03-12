@@ -22,8 +22,8 @@ pub struct OutputArgs {
     #[arg(long)]
     pub task_id: Option<String>,
 
-    /// 是否对输出结果进行脱敏（建议保持开启）
-    #[arg(long, default_value_t = true)]
+    /// 是否对输出结果进行脱敏（默认为关闭状态）
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set, value_name = "true|false")]
     pub sanitize: bool,
 }
 

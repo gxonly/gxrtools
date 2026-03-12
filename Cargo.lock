@@ -1534,6 +1534,7 @@ dependencies = [
  "anyhow",
  "async-std",
  "axum",
+ "base64 0.22.1",
  "calamine",
  "chromiumoxide",
  "chrono",
