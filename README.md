@@ -1,5 +1,6 @@
 # gxrtools
 
+> 提示：本工具会在本地生成测评证据（`output/<task-id>/...`）。证据目录默认已加入 `.gitignore`，请勿将客户数据/真实账号口令字典提交到仓库。
 
 ## 网络测试模块
 ### Ping
@@ -23,12 +24,24 @@ Options:
 gxtools.exe net ping -t 192.168.100.1,192.168.100.3-5,192.168.200.1/24
 ~~~
 
-### Trace 待完善，当前无法解析返回包
+### Trace（路由追踪）
+
+纯 Rust 实现，不调用系统 `traceroute`。通过 UDP 探测包递增 TTL，接收 ICMP Time Exceeded / Dest Unreachable 并解析 IP 首部后打印每一跳。**接收 ICMP 需 raw socket，Linux/macOS 通常需 root，Windows 需管理员。**
 
 ~~~bash
 # 参数
-执行路由追踪操作
+Usage: gxtools net trace [OPTIONS] --target <TARGET>
 
+Options:
+  -t, --target <TARGET>  目标主机（IP 或域名）
+  -m, --max-hops <N>    最大跳数 [default: 30]
+  -T, --timeout <SECS>  每跳超时（秒） [default: 3]
+  -q, --nqueries <N>    每跳探测次数（用于 RTT） [default: 3]
+  -h, --help            Print help
+
+# 例子
+gxtools net trace -t 8.8.8.8
+gxtools net trace -t baidu.com -m 20
 ~~~
 
 
@@ -51,6 +64,9 @@ Options:
   -c, --commands <COMMANDS>...             要执行的命令
   -t, --threads <THREADS>                  并发线程数 [default: 4]
   -e, --echo                               输出到控制台，使用前提需指定自定义命令
+      --out <OUT>                          输出根目录 [default: output]
+      --task-id <TASK_ID>                  任务ID（同一次测评建议统一）
+      --sanitize <SANITIZE>                输出脱敏 [default: true]
   -h, --help                               Print help
   
 # 例子
@@ -71,6 +87,9 @@ Options:
   -f, --file <FILE>  指定ps1脚本路径
   -p, --port <PORT>  修改端口，默认3000 [default: 3000]
   -i, --ip <IP>      绑定本机IP，默认自动识别，多网卡可能异常
+      --out <OUT>    输出根目录 [default: output]
+      --task-id <TASK_ID>  任务ID（同一次测评建议统一）
+      --sanitize <SANITIZE> 输出脱敏 [default: true]
   -h, --help         Print help
 
 # 例子
@@ -104,6 +123,9 @@ Options:
   -c, --commands <COMMANDS>...  要执行的SQL命令，多命令时，每个命令使用一个-c
   -t, --threads <THREADS>       并发线程数 [default: 4]
   -e, --echo                    输出到控制台，使用前提需指定自定义命令
+      --out <OUT>               输出根目录 [default: output]
+      --task-id <TASK_ID>       任务ID（同一次测评建议统一）
+      --sanitize <SANITIZE>     输出脱敏 [default: true]
   -h, --help                    Print help
   
 # 例子
@@ -134,6 +156,9 @@ Options:
   -c, --commands <COMMANDS>...       要执行的SQL命令，多命令时，每个命令使用一个-c
   -t, --threads <THREADS>            并发线程数 [default: 4]
   -e, --echo                         输出到控制台，使用前提需指定自定义命令
+      --out <OUT>                    输出根目录 [default: output]
+      --task-id <TASK_ID>            任务ID（同一次测评建议统一）
+      --sanitize <SANITIZE>          输出脱敏 [default: true]
   -h, --help                         Print help
 
   
@@ -156,7 +181,23 @@ Options:
   -H, --host <HOST>
   -P, --port <PORT>          [default: 6379]
   -p, --password <PASSWORD>  [default: ]
+      --out <OUT>            输出根目录 [default: output]
+      --task-id <TASK_ID>    任务ID（同一次测评建议统一）
+      --sanitize <SANITIZE>  输出脱敏 [default: true]
   -h, --help                 Print help
+
+## 合规分析与报告
+
+读取采集结果并生成“差距分析”报告（先内置 Redis 自动判定，后续可扩展到 Linux/Windows/MySQL/Oracle）。
+
+~~~bash
+# 例：统一 task-id 归档采集 + 分析
+gxtools.exe check redis -H 192.168.1.10 -P 6379 -p redis_pass --task-id 20260311_a
+gxtools.exe compliance analyze --task-id 20260311_a
+
+# 不指定 task-id 时，会自动选择 output/ 下最新的任务目录
+gxtools.exe compliance analyze
+~~~
 
   
 # 例子

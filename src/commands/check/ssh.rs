@@ -1,6 +1,6 @@
 // src/commands/ssh.rs
 use crate::constants::load_commands_from_yaml;
-use crate::utils::{create_excel_template, ensure_output_dir};
+use crate::utils::{OutputArgs, create_excel_template, ensure_module_output_dir, sanitize_json};
 use async_std::net::TcpStream;
 use calamine::{Reader, Xlsx, open_workbook};
 use clap::Parser;
@@ -53,6 +53,9 @@ pub struct SshArgs {
     /// 输出到控制台，使用前提需指定自定义命令
     #[arg(short = 'e', long, requires = "commands")]
     pub echo: bool,
+
+    #[command(flatten)]
+    pub output: OutputArgs,
 }
 
 #[derive(Debug, Clone)]
@@ -63,13 +66,22 @@ pub struct HostInfo {
     password_or_key: String,
 }
 
-fn save_result(host: &str, result: serde_json::Value) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let output_dir = ensure_output_dir("output/ssh")?;
+fn save_result(
+    host: &str,
+    output: &OutputArgs,
+    result: serde_json::Value,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let output_dir = ensure_module_output_dir(output, "ssh")?;
     let filename = format!("{}.json", host.replace(".", "_"));
     let filepath = output_dir.join(filename);
 
     let mut file = File::create(filepath)?;
-    write!(file, "{}", serde_json::to_string_pretty(&result)?)?;
+    let to_write = if output.sanitize {
+        sanitize_json(result)
+    } else {
+        result
+    };
+    write!(file, "{}", serde_json::to_string_pretty(&to_write)?)?;
     Ok(())
 }
 
@@ -96,7 +108,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     } else {
         return Err("必须指定 -H (单个主机) 或 -f (主机列表文件)".into());
     };
-    ensure_output_dir("output/ssh")?;
+    ensure_module_output_dir(&args.output, "ssh")?;
 
     println!("🚀 开始执行SSH批量命令，共 {} 台主机。", total_hosts);
 
@@ -119,6 +131,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     for host in hosts {
         let cmd = cmds_to_execute.clone();
         let echo = args.echo;
+        let output = args.output.clone();
         tasks.push(task::spawn(async move {
             let result =
                 match connect_ssh(&host.host, host.port, &host.username, &host.password_or_key)
@@ -168,7 +181,7 @@ pub async fn run(args: &SshArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
                 };
 
             // 保存结果到文件
-            if let Err(e) = save_result(&host.host, result) {
+            if let Err(e) = save_result(&host.host, &output, result) {
                 eprintln!("⚠️ 无法保存结果: {}", e);
             }
         }));

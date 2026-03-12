@@ -13,10 +13,11 @@ use std::path::Path;
 /// * `Vec<String>` - 命令列表，如果失败则返回空向量
 ///
 /// # 示例
-/// ```
+/// ```no_run
+/// use gxtools::constants::load_commands_from_yaml;
 /// let commands = load_commands_from_yaml("cmd.yaml", "linux_commands");
 /// for cmd in commands {
-///     println!("执行命令: {}", cmd);
+///   println!("执行命令: {}", cmd);
 /// }
 /// ```
 pub fn load_commands_from_yaml(path: &str, command_type: &str) -> Vec<String> {
@@ -68,14 +69,15 @@ pub fn load_commands_from_yaml(path: &str, command_type: &str) -> Vec<String> {
 /// * `Result<T, String>` - 反序列化后的配置对象或错误信息
 ///
 /// # 示例
-/// ```
+/// ```no_run
+/// use serde::Deserialize;
+/// use gxtools::constants::load_config;
 /// #[derive(Deserialize)]
 /// struct AppConfig {
-///     timeout: u64,
-///     retry: u32,
+///   timeout: u64,
+///   retry: u32,
 /// }
-///
-/// let config: AppConfig = load_config("config.yaml").unwrap();
+/// let _config: AppConfig = load_config("config.yaml").unwrap();
 /// ```
 pub fn load_config<T>(path: &str) -> Result<T, String>
 where

@@ -1,4 +1,4 @@
-use crate::utils::ensure_output_dir;
+use crate::utils::{OutputArgs, ensure_module_output_dir, sanitize_json};
 use clap::Parser;
 use redis::{Client, RedisResult, aio::MultiplexedConnection};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,9 @@ pub struct RedisArgs {
     pub port: u16,
     #[arg(short = 'p', long, default_value = "")]
     pub password: String,
+
+    #[command(flatten)]
+    pub output: OutputArgs,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -29,13 +32,22 @@ struct RedisBaseline {
     acl_user_detail: Option<HashMap<String, HashMap<String, String>>>,
 }
 
-fn save_result(host: &str, result: serde_json::Value) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let output_dir = ensure_output_dir("output/redis")?;
+fn save_result(
+    host: &str,
+    output: &OutputArgs,
+    result: serde_json::Value,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let output_dir = ensure_module_output_dir(output, "redis")?;
     let filename = format!("{}.json", host.replace(".", "_"));
     let filepath = output_dir.join(filename);
 
     let mut file = File::create(filepath)?;
-    write!(file, "{}", serde_json::to_string_pretty(&result)?)?;
+    let to_write = if output.sanitize {
+        sanitize_json(result)
+    } else {
+        result
+    };
+    write!(file, "{}", serde_json::to_string_pretty(&to_write)?)?;
     Ok(())
 }
 
@@ -71,40 +83,37 @@ async fn try_acl_user_detail(
 ) -> RedisResult<Option<HashMap<String, HashMap<String, String>>>> {
     let mut map = HashMap::new();
     for u in users {
-        match redis::cmd("ACL")
+        if let Ok(redis::Value::Array(items)) = redis::cmd("ACL")
             .arg("GETUSER")
             .arg(u)
             .query_async::<redis::Value>(conn)
             .await
         {
-            Ok(redis::Value::Array(items)) => {
-                // redis 6+ ACL GETUSER 返回 [ "flags", [flag1,flag2], "passwords", ["<hashed>"], ... ]
-                let mut detail = HashMap::new();
-                let mut i = 0;
-                while i + 1 < items.len() {
-                    if let redis::Value::BulkString(k) = &items[i] {
-                        let key = String::from_utf8_lossy(k).to_string();
-                        let value = match &items[i + 1] {
-                            redis::Value::Array(vs) => vs
-                                .iter()
-                                .filter_map(|v| match v {
-                                    redis::Value::BulkString(d) => {
-                                        Some(String::from_utf8_lossy(d).to_string())
-                                    }
-                                    _ => None,
-                                })
-                                .collect::<Vec<_>>()
-                                .join(","),
-                            redis::Value::BulkString(d) => String::from_utf8_lossy(d).to_string(),
-                            _ => "".to_string(),
-                        };
-                        detail.insert(key, value);
-                    }
-                    i += 2;
+            // redis 6+ ACL GETUSER 返回 [ "flags", [flag1,flag2], "passwords", ["<hashed>"], ... ]
+            let mut detail = HashMap::new();
+            let mut i = 0;
+            while i + 1 < items.len() {
+                if let redis::Value::BulkString(k) = &items[i] {
+                    let key = String::from_utf8_lossy(k).to_string();
+                    let value = match &items[i + 1] {
+                        redis::Value::Array(vs) => vs
+                            .iter()
+                            .filter_map(|v| match v {
+                                redis::Value::BulkString(d) => {
+                                    Some(String::from_utf8_lossy(d).to_string())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        redis::Value::BulkString(d) => String::from_utf8_lossy(d).to_string(),
+                        _ => "".to_string(),
+                    };
+                    detail.insert(key, value);
                 }
-                map.insert(u.clone(), detail);
+                i += 2;
             }
-            _ => {}
+            map.insert(u.clone(), detail);
         }
     }
     Ok(Some(map))
@@ -175,10 +184,15 @@ pub async fn run(args: &RedisArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
     };
 
     let json_string = serde_json::to_value(&baseline)?;
-    if let Err(e) = save_result(&args.host, json_string) {
+    if let Err(e) = save_result(&args.host, &args.output, json_string) {
         eprintln!("⚠️ 无法保存结果: {}", e);
     } else {
-        println!("✅ 采集 {} 成功，结果已保存至 output/redis/", &args.host);
+        println!(
+            "✅ 采集 {} 成功，结果已保存至 {}/{}/redis/",
+            &args.host,
+            args.output.out,
+            args.output.task_id_or_default()
+        );
     }
 
     Ok(())

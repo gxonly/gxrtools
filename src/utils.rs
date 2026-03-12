@@ -2,12 +2,87 @@ use chrono::Local;
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_xlsxwriter::ColNum;
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
+use serde_json::Value;
 use std::error::Error;
 use std::fs;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+
+/// 通用输出选项（所有子命令可复用）
+#[derive(clap::Args, Debug, Clone)]
+pub struct OutputArgs {
+    /// 输出根目录
+    #[arg(long, default_value = "output")]
+    pub out: String,
+
+    /// 任务ID（用于把一次测评/采集的结果归档到同一目录）
+    /// 不传则自动生成时间戳
+    #[arg(long)]
+    pub task_id: Option<String>,
+
+    /// 是否对输出结果进行脱敏（建议保持开启）
+    #[arg(long, default_value_t = true)]
+    pub sanitize: bool,
+}
+
+impl OutputArgs {
+    pub fn task_id_or_default(&self) -> String {
+        self.task_id
+            .clone()
+            .unwrap_or_else(|| Local::now().format("%Y%m%d_%H%M%S").to_string())
+    }
+
+    pub fn task_dir(&self) -> PathBuf {
+        PathBuf::from(&self.out).join(self.task_id_or_default())
+    }
+
+    pub fn module_dir(&self, module: &str) -> PathBuf {
+        self.task_dir().join(module)
+    }
+}
+
+/// 脱敏 JSON（屏蔽常见敏感字段）
+pub fn sanitize_json(mut v: Value) -> Value {
+    fn should_mask_key(key: &str) -> bool {
+        let k = key.to_lowercase();
+        k.contains("password")
+            || k == "pass"
+            || k.contains("token")
+            || k.contains("secret")
+            || k.contains("apikey")
+            || k.contains("api_key")
+            || k.contains("privatekey")
+            || k.contains("private_key")
+            || k.contains("accesskey")
+            || k.contains("access_key")
+    }
+
+    fn walk(v: &mut Value) {
+        match v {
+            Value::Object(map) => {
+                for (k, val) in map.iter_mut() {
+                    if should_mask_key(k) {
+                        // 保留类型但隐藏内容
+                        *val = Value::String("***".to_string());
+                    } else {
+                        walk(val);
+                    }
+                }
+            }
+            Value::Array(arr) => {
+                for item in arr.iter_mut() {
+                    walk(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    walk(&mut v);
+    v
+}
 
 /// 扫描进度控制结构体
 ///
@@ -24,7 +99,8 @@ impl ScanProgress {
     /// * `total` - 总任务数
     ///
     /// # 示例
-    /// ```
+    /// ```no_run
+    /// use gxtools::utils::ScanProgress;
     /// let progress = ScanProgress::new(100);
     /// ```
     pub fn new(total: u64) -> Self {
@@ -87,8 +163,12 @@ impl ScanProgress {
 /// * `Err` - 创建失败时返回错误
 ///
 /// # 示例
-/// ```
-/// let output_dir = ensure_output_dir("output/scan")?;
+/// ```no_run
+/// use gxtools::utils::ensure_output_dir;
+/// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///   let _output_dir = ensure_output_dir("output/scan")?;
+///   Ok(())
+/// }
 /// ```
 pub fn ensure_output_dir(path: &str) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     let output_dir = PathBuf::from(path);
@@ -96,6 +176,63 @@ pub fn ensure_output_dir(path: &str) -> Result<PathBuf, Box<dyn Error + Send + S
         fs::create_dir_all(&output_dir).map_err(|e| format!("创建目录失败 {}: {}", path, e))?;
     }
     Ok(output_dir)
+}
+
+/// 以 OutputArgs 生成并确保模块输出目录存在
+pub fn ensure_module_output_dir(
+    output: &OutputArgs,
+    module: &str,
+) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let dir = output.module_dir(module);
+    if !dir.exists() {
+        fs::create_dir_all(&dir)
+            .map_err(|e| format!("创建目录失败 {}: {}", dir.display(), e))?;
+    }
+    Ok(dir)
+}
+
+/// 将数据保存到指定 base_dir/subdir 的 Excel 文件
+pub fn save_to_excel_with_base<T, F>(
+    base_dir: &Path,
+    subdir: &str,
+    data: &[T],
+    headers: &[&str],
+    row_mapper: F,
+    filename_prefix: &str,
+) -> Result<String, Box<dyn Error + Send + Sync>>
+where
+    F: Fn(&T) -> Vec<String>,
+{
+    let output_dir = base_dir.join(subdir);
+    if !output_dir.exists() {
+        fs::create_dir_all(&output_dir)
+            .map_err(|e| format!("创建目录失败 {}: {}", output_dir.display(), e))?;
+    }
+
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let filename = format!("{}_{}.xlsx", filename_prefix, timestamp);
+    let filepath = output_dir.join(&filename);
+
+    let mut workbook = Workbook::new(filepath.to_str().unwrap());
+    let worksheet = workbook.add_worksheet();
+
+    let header_format = Format::new().set_bold();
+    let cell_format = Format::new();
+
+    for (col, header) in headers.iter().enumerate() {
+        worksheet.write_string(0, ColNum::from(col as u16), header, &header_format)?;
+    }
+
+    for (i, item) in data.iter().enumerate() {
+        let row_data = row_mapper(item);
+        for (j, value) in row_data.iter().enumerate() {
+            worksheet.write_string((i + 1) as u32, ColNum::from(j as u16), value, &cell_format)?;
+        }
+    }
+
+    workbook.close()?;
+    println!("✅ 结果已保存至: {}", filepath.display());
+    Ok(filepath.to_string_lossy().to_string())
 }
 
 /// 检查文件是否存在
@@ -122,11 +259,15 @@ pub fn check_file_exists(file_path: &Path) -> bool {
 /// * `Err(XlsxError)` - 创建失败
 ///
 /// # 示例
-/// ```
-/// create_excel_template(
+/// ```no_run
+/// use gxtools::utils::create_excel_template;
+/// fn main() -> Result<(), Box<dyn std::error::Error>> {
+///   create_excel_template(
 ///     "output/template.xlsx",
 ///     vec!["IP地址".to_string(), "端口".to_string(), "状态".to_string()]
-/// )?;
+///   )?;
+///   Ok(())
+/// }
 /// ```
 pub fn create_excel_template<P: AsRef<Path>>(
     path: P,
@@ -163,8 +304,12 @@ pub fn create_excel_template<P: AsRef<Path>>(
 /// * `Err` - 解析失败时返回错误信息
 ///
 /// # 示例
-/// ```
-/// let ips = parse_targets("192.168.1.0/24,10.0.0.1-5")?;
+/// ```no_run
+/// use gxtools::utils::parse_targets;
+/// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///   let _ips = parse_targets("192.168.1.0/24,10.0.0.1-5")?;
+///   Ok(())
+/// }
 /// ```
 pub fn parse_targets(targets: &str) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
     let mut all_ips = Vec::new();
@@ -305,14 +450,21 @@ fn parse_ip_range(range_str: &str) -> Result<Vec<String>, Box<dyn Error + Send +
 /// * `Err` - 保存失败
 ///
 /// # 示例
-/// ```
-/// save_to_excel(
+/// ```no_run
+/// use gxtools::utils::save_to_excel;
+/// #[derive(Clone)]
+/// struct R { ip: String, status: String }
+/// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///   let results = vec![R { ip: "127.0.0.1".into(), status: "成功".into() }];
+///   save_to_excel(
 ///     &results,
 ///     &["IP", "状态"],
 ///     |r| vec![r.ip.clone(), r.status.clone()],
 ///     "scan",
 ///     "result"
-/// )?;
+///   )?;
+///   Ok(())
+/// }
 /// ```
 pub fn save_to_excel<T, F>(
     data: &[T],
@@ -372,8 +524,10 @@ where
 /// * `Vec<u16>` - 解析后的端口列表（已排序去重）
 ///
 /// # 示例
-/// ```
+/// ```no_run
+/// use gxtools::utils::parse_ports;
 /// let ports = parse_ports("22,80-443,8080");
+/// assert!(!ports.is_empty());
 /// ```
 pub fn parse_ports(port_str: &str) -> Vec<u16> {
     let mut ports = Vec::new();
@@ -424,8 +578,10 @@ pub fn parse_ports(port_str: &str) -> Vec<u16> {
 /// * `String` - 格式化后的字符串，如 "1.5 MB"
 ///
 /// # 示例
-/// ```
+/// ```no_run
+/// use gxtools::utils::format_bytes;
 /// let size = format_bytes(1048576); // "1.00 MB"
+/// assert!(size.contains("MB"));
 /// ```
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];

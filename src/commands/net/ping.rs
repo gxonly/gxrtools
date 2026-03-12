@@ -1,5 +1,5 @@
 // src/commands/net/ping.rs
-use crate::utils::{ScanProgress, parse_targets, save_to_excel};
+use crate::utils::{OutputArgs, ScanProgress, parse_targets, save_to_excel_with_base};
 use clap::Parser;
 use std::error::Error;
 use std::sync::Arc;
@@ -39,6 +39,9 @@ pub struct PingArgs {
     /// 是否输出结果到Excel文件
     #[arg(short = 'o', long)]
     pub output: bool,
+
+    #[command(flatten)]
+    pub out: OutputArgs,
 }
 
 /// Ping扫描结果
@@ -121,7 +124,7 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // 打印详细结果
     if args.echo {
-        progress.println("📋 扫描结果：".to_string());
+        progress.println("📋 扫描结果：");
         for result in &results {
             if result.is_success() {
                 let time_info = result
@@ -137,7 +140,10 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
 
     // 保存到Excel
     if args.output {
-        save_to_excel(
+        let base = args.out.task_dir();
+        save_to_excel_with_base(
+            &base,
+            "ping",
             &results,
             &["IP地址", "状态", "响应时间(ms)"],
             |item| {
@@ -149,7 +155,6 @@ pub async fn run(args: &PingArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
                         .unwrap_or_else(|| "-".to_string()),
                 ]
             },
-            "ping",
             "ping",
         )?;
     }

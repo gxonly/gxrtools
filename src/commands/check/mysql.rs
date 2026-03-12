@@ -1,6 +1,6 @@
 // src/commands/check/mysql.rs
 use crate::constants::load_commands_from_yaml;
-use crate::utils::{create_excel_template, ensure_output_dir};
+use crate::utils::{OutputArgs, create_excel_template, ensure_module_output_dir, sanitize_json};
 use calamine::{Reader, Xlsx, open_workbook};
 use clap::Parser;
 use mysql_async::prelude::*;
@@ -52,6 +52,9 @@ pub struct MysqlArgs {
     /// 输出到控制台，使用前提需指定自定义命令
     #[arg(short = 'e', long, requires = "commands")]
     pub echo: bool,
+
+    #[command(flatten)]
+    pub output: OutputArgs,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +83,7 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
         }]
     };
 
-    ensure_output_dir("output/mysql")?;
+    ensure_module_output_dir(&args.output, "mysql")?;
     println!("开始执行，共 {} 个实例", db_list.len());
 
     let queries = if args.commands.is_empty() {
@@ -100,6 +103,7 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
         let cmds = queries.clone();
         let echo = args.echo;
         let host = db.host.clone();
+        let output = args.output.clone();
         handles.push(task::spawn(async move {
             let result = match connect_and_execute(&db, &cmds, echo).await {
                 Ok(json) => json,
@@ -108,12 +112,19 @@ pub async fn run(args: &MysqlArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
                     "error": e.to_string(),
                 }),
             };
-            let filename = format!("output/mysql/{}.json", db.host.replace(".", "_"));
-            let mut file = File::create(filename).unwrap();
-            file.write_all(serde_json::to_string_pretty(&result).unwrap().as_bytes())
+            let dir = ensure_module_output_dir(&output, "mysql").expect("创建目录失败");
+            let filename = format!("{}.json", db.host.replace(".", "_"));
+            let filepath = dir.join(filename);
+            let to_write = if output.sanitize {
+                sanitize_json(result)
+            } else {
+                result
+            };
+            let mut file = File::create(filepath).unwrap();
+            file.write_all(serde_json::to_string_pretty(&to_write).unwrap().as_bytes())
                 .unwrap();
             // 根据返回内容判断是否有错误
-            if let Some(err_msg) = result.get("error") {
+            if let Some(err_msg) = to_write.get("error") {
                 println!("❌ [{}] 采集失败，原因: {}", host, err_msg);
             } else {
                 println!("✅ [{}] 采集完成", host);

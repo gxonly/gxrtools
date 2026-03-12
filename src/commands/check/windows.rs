@@ -9,13 +9,19 @@ use serde_json::Value;
 use std::{net::SocketAddr, sync::Arc};
 use encoding_rs::UTF_16LE;
 use clap::Args;
-use crate::utils::ensure_output_dir;
+use crate::utils::{OutputArgs, ensure_module_output_dir, sanitize_json};
 use hyper::{Server, server::conn::AddrIncoming};
 use tokio::fs;
 use std::fs as stdfs;
 use local_ip_address::local_ip;
 use std::net::IpAddr;
 use std::str::FromStr;
+
+#[derive(Clone)]
+struct AppState {
+    script_path: Arc<String>,
+    output: OutputArgs,
+}
 
 #[derive(Debug, Args)]
 pub struct WindowsArgs {
@@ -28,6 +34,9 @@ pub struct WindowsArgs {
     /// 绑定本机IP，默认自动识别，多网卡可能异常
     #[arg(short, long)]
     pub ip: Option<String>,
+
+    #[command(flatten)]
+    pub output: OutputArgs,
 }
 
 pub async fn run(args: &WindowsArgs) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -62,12 +71,18 @@ pub async fn run(args: &WindowsArgs) -> Result<(), Box<dyn std::error::Error + S
     }
     stdfs::write(&script_path, script_content)?;
 
+    ensure_module_output_dir(&args.output, "windows")?;
+
+    let state = AppState {
+        script_path: Arc::new(script_path),
+        output: args.output.clone(),
+    };
+
     let app = Router::new()
         .route("/script", get(get_script))
-        // .with_state(Arc::new(script_path))
         .route("/windows", get(get_windows_script))
-        .with_state(Arc::new(script_path))
-        .route("/report", post(report_result));
+        .route("/report", post(report_result))
+        .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
     println!("Server running at http://{}", addr);
@@ -81,8 +96,8 @@ pub async fn run(args: &WindowsArgs) -> Result<(), Box<dyn std::error::Error + S
     Ok(())
 }
 
-async fn get_windows_script(State(script_path): State<Arc<String>>) -> Response {
-    match stdfs::read_to_string(&*script_path) {
+async fn get_windows_script(State(state): State<AppState>) -> Response {
+    match stdfs::read_to_string(&*state.script_path) {
         Ok(script) => {
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -103,8 +118,8 @@ async fn get_windows_script(State(script_path): State<Arc<String>>) -> Response 
     }
 }
 
-async fn get_script(State(path): State<Arc<String>>) -> Response {
-    match stdfs::read(&**path) {
+async fn get_script(State(state): State<AppState>) -> Response {
+    match stdfs::read(&*state.script_path) {
         Ok(bytes) => {
             let (cow, _, had_errors) = UTF_16LE.decode(&bytes);
             if had_errors {
@@ -125,13 +140,22 @@ async fn get_script(State(path): State<Arc<String>>) -> Response {
     }
 }
 
-async fn report_result(ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(payload): Json<Value>) -> impl IntoResponse {
+async fn report_result(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(payload): Json<Value>,
+) -> impl IntoResponse {
     let ip = addr.ip().to_string();
-    let output_dir = ensure_output_dir("output/windows").expect("创建目录失败");
     let filename = format!("{}.json", ip);
+    let output_dir = ensure_module_output_dir(&state.output, "windows").expect("创建目录失败");
     let filepath = output_dir.join(filename);
     println!("已获取客户端: {}数据", ip);
-    match serde_json::to_string_pretty(&payload) {
+    let to_write = if state.output.sanitize {
+        sanitize_json(payload)
+    } else {
+        payload
+    };
+    match serde_json::to_string_pretty(&to_write) {
         Ok(pretty) => {
             if let Err(e) = fs::write(&filepath, pretty).await {
                 eprintln!("写入文件失败: {}", e);
