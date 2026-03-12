@@ -38,3 +38,10 @@ indicatif = "0.17"
 tokio-native-tls = "0.3"
 native-tls = "0.2.14"
 rdp-rs = "0.1.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_Networking_WinSock",
+] }

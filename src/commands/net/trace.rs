@@ -73,6 +73,13 @@ pub fn run(args: &TraceArgs) -> Result<(), Box<dyn Error + Send + Sync>> {
         args.target, dest_ip, args.max_hops
     );
 
+    // Windows 下 raw socket 对 ICMP 差错报文的支持非常不稳定，
+    // 使用 IcmpSendEcho 实现 tracert 类逻辑（仍是 Rust 代码，不调用系统命令）。
+    #[cfg(windows)]
+    {
+        return windows_icmp_trace(args, dest_ip);
+    }
+
     // 接收 ICMP 的 raw socket（仅 IPv4）
     let icmp_sock = Socket::new(Domain::IPV4, Type::RAW, Some(Protocol::ICMPV4))
         .map_err(|e| format!("创建 ICMP raw socket 失败（可能需要 root/管理员）: {}", e))?;
@@ -189,4 +196,113 @@ fn resolve_target(target: &str) -> Result<IpAddr, Box<dyn Error + Send + Sync>> 
         }
     }
     Err(format!("无法将 {} 解析为 IPv4 地址", target).into())
+}
+
+#[cfg(windows)]
+fn windows_icmp_trace(args: &TraceArgs, dest_ip: IpAddr) -> Result<(), Box<dyn Error + Send + Sync>> {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        IcmpCreateFile, IcmpSendEcho, ICMP_ECHO_REPLY, IP_OPTION_INFORMATION,
+    };
+    use windows_sys::Win32::Networking::WinSock::{IN_ADDR, inet_addr};
+    use std::mem::{size_of, zeroed};
+
+    let IpAddr::V4(v4) = dest_ip else {
+        return Err("Windows traceroute 当前仅支持 IPv4".into());
+    };
+
+    unsafe {
+        let h: HANDLE = IcmpCreateFile();
+        if h == 0 {
+            return Err("IcmpCreateFile 失败（权限或系统组件缺失）".into());
+        }
+
+        let ip_str = v4.to_string();
+        let ip_c = std::ffi::CString::new(ip_str).unwrap();
+        let ip_u32 = inet_addr(ip_c.as_ptr());
+        if ip_u32 == u32::MAX {
+            let _ = CloseHandle(h);
+            return Err("inet_addr 解析失败".into());
+        }
+
+        let dest = IN_ADDR { S_un: windows_sys::Win32::Networking::WinSock::IN_ADDR_0 { S_addr: ip_u32 } };
+
+        let send_data: [u8; 32] = [0u8; 32];
+        let reply_size = size_of::<ICMP_ECHO_REPLY>() + send_data.len() + 8;
+        let mut reply_buf = vec![0u8; reply_size];
+
+        for ttl in 1..=args.max_hops {
+            let mut rtts_ms: Vec<u32> = Vec::with_capacity(args.nqueries as usize);
+            let mut hop_ip: Option<Ipv4Addr> = None;
+            let mut reached = false;
+
+            for _ in 0..args.nqueries {
+                let mut opts: IP_OPTION_INFORMATION = zeroed();
+                opts.Ttl = ttl;
+
+                let ret = IcmpSendEcho(
+                    h,
+                    dest.S_un.S_addr,
+                    send_data.as_ptr() as *const _,
+                    send_data.len() as u16,
+                    &opts,
+                    reply_buf.as_mut_ptr() as *mut _,
+                    reply_buf.len() as u32,
+                    (args.timeout * 1000) as u32,
+                );
+
+                if ret == 0 {
+                    continue; // timeout or error
+                }
+
+                let reply: &ICMP_ECHO_REPLY = &*(reply_buf.as_ptr() as *const ICMP_ECHO_REPLY);
+                let addr = Ipv4Addr::from(reply.Address);
+                hop_ip.get_or_insert(addr);
+                rtts_ms.push(reply.RoundTripTime);
+
+                // Status codes:
+                // 0 = IP_SUCCESS
+                // 11013 = IP_TTL_EXPIRED_TRANSIT
+                // 11003 = IP_DEST_HOST_UNREACHABLE
+                // 11010 = IP_REQ_TIMED_OUT
+                if reply.Status == 0 {
+                    reached = true;
+                }
+            }
+
+            if let Some(ip) = hop_ip {
+                let avg = if rtts_ms.is_empty() {
+                    None
+                } else {
+                    Some(rtts_ms.iter().map(|x| *x as u64).sum::<u64>() / rtts_ms.len() as u64)
+                };
+                if reached {
+                    println!(
+                        "{:>3}  {}  🎯 到达目标{}",
+                        ttl,
+                        ip,
+                        avg.map(|a| format!("  {} ms", a)).unwrap_or_default()
+                    );
+                    println!("\n✅ 追踪完成");
+                    let _ = CloseHandle(h);
+                    return Ok(());
+                } else {
+                    println!(
+                        "{:>3}  {}  ⏱ TTL 超时{}",
+                        ttl,
+                        ip,
+                        avg.map(|a| format!("  {} ms", a)).unwrap_or_default()
+                    );
+                }
+            } else {
+                println!("{:>3}  *  请求超时", ttl);
+            }
+
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        let _ = CloseHandle(h);
+        println!("\n❌ 未在 {} 跳内到达目标", args.max_hops);
+        Ok(())
+    }
 }
